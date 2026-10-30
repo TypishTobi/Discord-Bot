@@ -18,24 +18,41 @@
 //   MIN_ROLE_ID         Niedrigste Rolle, die /mcname benutzen darf (z. B. Mod);
 //                       alle Rollen darüber dürfen es auch
 //   GUILD_ID, ROLE_IDS  Optional; Standard siehe unten (Server/Rolle der Website)
+//   DISCORD_CLIENT_SECRET  Client Secret der App (OAuth2-Seite, als Secret!) für
+//                       den Discord-Login der Tierlist; signiert auch die Sitzungen
+//   TIER_CHANNEL_ID     Optional; Kanal für Tier-Einträge (Standard: MC_CHANNEL_ID)
+//   SITE_URL            Optional; Adresse der Website (Standard siehe unten)
 //
-// GET /members.json liefert die Mitgliederliste live für die Website
-// (gleiches Format wie scripts/fetch_members.py, 60 Sekunden zwischengespeichert).
+// GET  /members.json   Mitgliederliste live für die Website (gleiches Format wie
+//                      scripts/fetch_members.py plus Tier, 60 s zwischengespeichert)
+// GET  /auth/login     Discord-Login fürs Team, leitet mit #session=... zurück
+// GET  /auth/me        Prüft eine Sitzung (Authorization: Bearer ...)
+// POST /tierlist       { player, tier } speichert ein Tier (nur Team ab MIN_ROLE_ID);
+//                      als Nachricht "tier:<discordId>:<tier>" im Tier-Kanal, neueste gilt
 
 const API = "https://discord.com/api/v10";
 const DEFAULT_GUILD_ID = "1502797926982746224";
 const DEFAULT_ROLE_IDS = "1510380603479036054";
+const DEFAULT_SITE_URL = "https://typishtobi.github.io/Discord-Bot/";
 const MEMBERS_CACHE_SECONDS = 60;
+const SESSION_HOURS = 12;
+const TIERS = ["S+", "S", "A+", "A", "B+", "B", "C+", "C"];
 const NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
 const ENTRY_RE = /^(?:-# )?(?:mc:(\d+):(\w{3,16}):([0-9a-f]{32})|mcdel:(\d+))$/m;
+const TIER_RE = /^(?:-# )?tier:(\d+):([SABC]\+?|-)$/m;
 const ADMINISTRATOR = 1n << 3n;
 const EPHEMERAL = 64;
+let cachedAppId = null;
 
 export default {
   async fetch(request, env, ctx) {
-    if (request.method === "GET" && new URL(request.url).pathname === "/members.json") {
-      return membersResponse(request, env, ctx);
-    }
+    const path = new URL(request.url).pathname;
+    if (request.method === "OPTIONS") return withCors(new Response(null, { status: 204 }));
+    if (request.method === "GET" && path === "/members.json") return membersResponse(request, env, ctx);
+    if (request.method === "GET" && path === "/auth/login") return authLogin(request, env);
+    if (request.method === "GET" && path === "/auth/callback") return authCallback(request, env);
+    if (request.method === "GET" && path === "/auth/me") return authMe(request, env);
+    if (request.method === "POST" && path === "/tierlist") return tierSave(request, env, ctx);
     if (request.method !== "POST") return new Response("Discord-Minecraft-Worker läuft.");
 
     const body = await request.text();
@@ -196,22 +213,42 @@ async function assignName(env, interaction, userId, input, modId) {
 // Liest den Namens-Kanal: Map discordId -> { name, uuid }, neueste Nachricht pro Nutzer gilt.
 // Nur Nachrichten des eigenen Bots zählen (Bot-ID = Application-ID).
 async function loadNames(env, botId) {
-  const latest = new Map();
+  return parseNames(await channelContents(env, env.MC_CHANNEL_ID, botId));
+}
+
+// Alle Nachrichtentexte des eigenen Bots in einem Kanal, neueste zuerst
+async function channelContents(env, channelId, botId) {
+  const contents = [];
   let before = null;
   while (true) {
     const query = before ? `?limit=100&before=${before}` : "?limit=100";
-    const batch = await discord(env, `/channels/${env.MC_CHANNEL_ID}/messages${query}`, "GET");
-    for (const msg of batch) {
-      if (msg.author.id !== botId) continue;
-      const m = ENTRY_RE.exec(msg.content);
-      if (!m) continue;
-      const id = m[1] ?? m[4];
-      if (!latest.has(id)) latest.set(id, m[1] ? { name: m[2], uuid: m[3] } : null);
-    }
-    if (batch.length < 100) break;
+    const batch = await discord(env, `/channels/${channelId}/messages${query}`, "GET");
+    for (const msg of batch) if (msg.author.id === botId) contents.push(msg.content);
+    if (batch.length < 100) return contents;
     before = batch[batch.length - 1].id;
   }
+}
+
+function parseNames(contents) {
+  const latest = new Map();
+  for (const content of contents) {
+    const m = ENTRY_RE.exec(content);
+    if (!m) continue;
+    const id = m[1] ?? m[4];
+    if (!latest.has(id)) latest.set(id, m[1] ? { name: m[2], uuid: m[3] } : null);
+  }
   for (const [id, entry] of latest) if (!entry) latest.delete(id);
+  return latest;
+}
+
+// Map discordId -> Tier; "-" (nicht eingestuft) wird weggelassen
+function parseTiers(contents) {
+  const latest = new Map();
+  for (const content of contents) {
+    const m = TIER_RE.exec(content);
+    if (m && !latest.has(m[1])) latest.set(m[1], TIERS.includes(m[2]) ? m[2] : null);
+  }
+  for (const [id, tier] of latest) if (!tier) latest.delete(id);
   return latest;
 }
 
@@ -254,7 +291,13 @@ async function buildMembers(env) {
     fetchAllMembers(env, guildId),
   ]);
   const botId = (await discord(env, "/users/@me", "GET")).id;
-  const names = env.MC_CHANNEL_ID ? await loadNames(env, botId) : new Map();
+  const mcContents = env.MC_CHANNEL_ID ? await channelContents(env, env.MC_CHANNEL_ID, botId) : [];
+  const tierChannel = env.TIER_CHANNEL_ID || env.MC_CHANNEL_ID;
+  const tierContents = !tierChannel ? []
+    : tierChannel === env.MC_CHANNEL_ID ? mcContents
+    : await channelContents(env, tierChannel, botId);
+  const names = parseNames(mcContents);
+  const tiers = parseTiers(tierContents);
 
   const rolesById = new Map(roles.map(r => [r.id, r]));
   const rolesByKey = new Map();
@@ -277,6 +320,7 @@ async function buildMembers(env) {
           ...rank,
           minecraft: mc?.name ?? null,
           minecraftUuid: mc?.uuid ?? null,
+          tier: tiers.get(m.user.id) ?? null,
           roles: roleIds.filter(id => m.roles.includes(id)),
           joinedAt: m.joined_at ?? null,
         };
@@ -297,7 +341,7 @@ async function buildMembers(env) {
   }
   result.sort((a, b) => b.position - a.position);
   for (const r of result) delete r.position;
-  return { guild: guild.name, updatedAt: new Date().toISOString(), roles: result };
+  return { guild: guild.name, updatedAt: new Date().toISOString(), tiers: TIERS, roles: result };
 }
 
 async function fetchAllMembers(env, guildId) {
@@ -347,12 +391,202 @@ async function isTeam(interaction, env) {
   const member = interaction.member;
   if (!member) return false;
   if ((BigInt(member.permissions ?? 0) & ADMINISTRATOR) === ADMINISTRATOR) return true;
-  if (!env.MIN_ROLE_ID) return false;
   const roles = await discord(env, `/guilds/${interaction.guild_id}/roles`, "GET");
+  return rolesReachMin(env, roles, member.roles);
+}
+
+// Wie isTeam, aber für Website-Logins: Mitglied über den Bot nachschlagen
+async function isTeamUser(env, userId) {
+  const guildId = env.GUILD_ID || DEFAULT_GUILD_ID;
+  let member;
+  try {
+    member = await discord(env, `/guilds/${guildId}/members/${userId}`, "GET");
+  } catch {
+    return false; // nicht auf dem Server
+  }
+  const [guild, roles] = await Promise.all([
+    discord(env, `/guilds/${guildId}`, "GET"),
+    discord(env, `/guilds/${guildId}/roles`, "GET"),
+  ]);
+  if (guild.owner_id === userId) return true;
+  const adminRoles = new Set(roles.filter(r => (BigInt(r.permissions) & ADMINISTRATOR) === ADMINISTRATOR).map(r => r.id));
+  if (member.roles.some(id => adminRoles.has(id))) return true;
+  return rolesReachMin(env, roles, member.roles);
+}
+
+function rolesReachMin(env, roles, memberRoleIds) {
+  if (!env.MIN_ROLE_ID) return false;
   const position = new Map(roles.map(r => [r.id, r.position]));
   const min = position.get(env.MIN_ROLE_ID);
   if (min === undefined) throw new Error("MIN_ROLE_ID ist keine Rolle dieses Servers");
-  return member.roles.some(id => (position.get(id) ?? -1) >= min);
+  return memberRoleIds.some(id => (position.get(id) ?? -1) >= min);
+}
+
+// --- Discord-Login und Tierlist -------------------------------------------
+
+function siteUrl(env) {
+  return env.SITE_URL || DEFAULT_SITE_URL;
+}
+
+// Nur zurück auf die eigene Website leiten, damit die Sitzung nirgendwo anders landet
+function safeReturn(env, target) {
+  try {
+    const url = new URL(target);
+    if (url.origin === new URL(siteUrl(env)).origin) return url.origin + url.pathname + url.search;
+  } catch {}
+  return siteUrl(env);
+}
+
+async function appId(env) {
+  cachedAppId ??= (await discord(env, "/applications/@me", "GET")).id;
+  return cachedAppId;
+}
+
+async function authLogin(request, env) {
+  const url = new URL(request.url);
+  const state = await sign(env, {
+    r: safeReturn(env, url.searchParams.get("return") || ""),
+    exp: Date.now() + 10 * 60 * 1000,
+  });
+  const params = new URLSearchParams({
+    client_id: await appId(env),
+    response_type: "code",
+    scope: "identify",
+    redirect_uri: url.origin + "/auth/callback",
+    state,
+    prompt: "none",
+  });
+  return Response.redirect("https://discord.com/oauth2/authorize?" + params, 302);
+}
+
+async function authCallback(request, env) {
+  const url = new URL(request.url);
+  const state = await verifySigned(env, url.searchParams.get("state"));
+  if (!state) return new Response("Login abgelaufen. Bitte noch einmal versuchen.", { status: 400 });
+  const back = hash => Response.redirect(state.r + "#" + hash, 302);
+
+  const code = url.searchParams.get("code");
+  if (!code) return back("login=abgebrochen");
+
+  const tokenRes = await fetch(`${API}/oauth2/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: await appId(env),
+      client_secret: env.DISCORD_CLIENT_SECRET,
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: url.origin + "/auth/callback",
+    }),
+  });
+  if (!tokenRes.ok) {
+    console.error("OAuth-Fehler", tokenRes.status, await tokenRes.text());
+    return back("login=fehler");
+  }
+  const { access_token } = await tokenRes.json();
+  const userRes = await fetch(`${API}/users/@me`, { headers: { Authorization: `Bearer ${access_token}` } });
+  if (!userRes.ok) return back("login=fehler");
+  const user = await userRes.json();
+
+  if (!(await isTeamUser(env, user.id))) return back("login=kein-team");
+  const session = await sign(env, {
+    uid: user.id,
+    name: user.global_name || user.username,
+    exp: Date.now() + SESSION_HOURS * 3600 * 1000,
+  });
+  return back("session=" + session);
+}
+
+async function sessionFrom(request, env) {
+  const header = request.headers.get("Authorization") || "";
+  return header.startsWith("Bearer ") ? verifySigned(env, header.slice(7)) : null;
+}
+
+async function authMe(request, env) {
+  const session = await sessionFrom(request, env);
+  if (!session) return withCors(json({ error: "Nicht angemeldet" }, 401));
+  return withCors(json({ id: session.uid, name: session.name, expires: session.exp }));
+}
+
+async function tierSave(request, env, ctx) {
+  try {
+    const session = await sessionFrom(request, env);
+    if (!session) return withCors(json({ error: "Bitte neu anmelden." }, 401));
+    if (!(await isTeamUser(env, session.uid))) return withCors(json({ error: "Nur das Team darf die Tierlist ändern." }, 403));
+
+    const body = await request.json().catch(() => ({}));
+    const player = String(body.player ?? "");
+    const tier = body.tier ?? null;
+    if (!/^\d{5,25}$/.test(player) || (tier !== null && !TIERS.includes(tier))) {
+      return withCors(json({ error: "Ungültige Angaben." }, 400));
+    }
+
+    // Nur Spieler mit einer der Website-Rollen dürfen eingestuft werden
+    const guildId = env.GUILD_ID || DEFAULT_GUILD_ID;
+    const roleIds = (env.ROLE_IDS || DEFAULT_ROLE_IDS).split(",").map(s => s.trim());
+    const member = await discord(env, `/guilds/${guildId}/members/${player}`, "GET").catch(() => null);
+    if (!member || !member.roles.some(id => roleIds.includes(id))) {
+      return withCors(json({ error: "Dieser Spieler ist kein Teilnehmer." }, 400));
+    }
+
+    const channel = env.TIER_CHANNEL_ID || env.MC_CHANNEL_ID;
+    await discord(env, `/channels/${channel}/messages`, "POST", {
+      content: `<@${player}> → ${tier ? `Tier **${tier}**` : "*nicht eingestuft*"} (von <@${session.uid}>)\n` +
+        `-# tier:${player}:${tier ?? "-"}`,
+      allowed_mentions: { parse: [] }, // Spieler nicht über ihr Tier benachrichtigen
+    });
+
+    // Zwischengespeicherte Mitgliederliste verwerfen, damit die Änderung sofort sichtbar ist
+    ctx.waitUntil(caches.default.delete(new Request(new URL("/members.json", request.url).toString())));
+    return withCors(json({ ok: true, player, tier }));
+  } catch (err) {
+    console.error(err);
+    return withCors(json({ error: "Speichern fehlgeschlagen: " + String(err.message).slice(0, 150) }, 502));
+  }
+}
+
+// Signierte Daten: base64url(JSON) + "." + base64url(HMAC-SHA256), Schlüssel = Client Secret
+async function hmacKey(env) {
+  if (!env.DISCORD_CLIENT_SECRET) throw new Error("DISCORD_CLIENT_SECRET fehlt im Worker");
+  return crypto.subtle.importKey("raw", new TextEncoder().encode(env.DISCORD_CLIENT_SECRET),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+}
+
+async function sign(env, data) {
+  const payload = b64url(new TextEncoder().encode(JSON.stringify(data)));
+  const sig = await crypto.subtle.sign("HMAC", await hmacKey(env), new TextEncoder().encode(payload));
+  return payload + "." + b64url(new Uint8Array(sig));
+}
+
+async function verifySigned(env, token) {
+  if (!token || !token.includes(".")) return null;
+  const [payload, sig] = token.split(".");
+  try {
+    const ok = await crypto.subtle.verify("HMAC", await hmacKey(env), fromB64url(sig), new TextEncoder().encode(payload));
+    if (!ok) return null;
+    const data = JSON.parse(new TextDecoder().decode(fromB64url(payload)));
+    return data.exp > Date.now() ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+function b64url(bytes) {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function fromB64url(text) {
+  const bin = atob(text.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((text.length + 3) % 4));
+  return Uint8Array.from(bin, c => c.charCodeAt(0));
+}
+
+function withCors(response) {
+  const headers = new Headers(response.headers);
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  headers.set("Access-Control-Max-Age", "86400");
+  return new Response(response.body, { status: response.status, headers });
 }
 
 // Liefert { id, name } mit korrekter Schreibweise oder null, wenn es den Account nicht gibt
@@ -414,6 +648,6 @@ function hexToBytes(hex) {
   return bytes;
 }
 
-function json(data) {
-  return new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } });
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
