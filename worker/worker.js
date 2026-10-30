@@ -31,6 +31,8 @@
 // GET  /auth/me        Prüft eine Sitzung (Authorization: Bearer ...)
 // POST /tierlist       { player, tier } speichert ein Tier (nur Team ab MIN_ROLE_ID);
 //                      als Nachricht "tier:<discordId>:<tier>" im Tier-Kanal, neueste gilt
+// POST /player         { player, team, heartsLost, kills, description } speichert Spielerdaten;
+//                      als "pdata:<discordId>:<base64url(JSON)>" im Tier-Kanal, neueste gilt
 
 const API = "https://discord.com/api/v10";
 const DEFAULT_GUILD_ID = "1502797926982746224";
@@ -43,6 +45,10 @@ const NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
 const ENTRY_RE = /^(?:-# )?(?:mc:(\d+):(\w{3,16}):([0-9a-f]{32})|mcdel:(\d+))$/m;
 const TIER_RE = /^(?:-# )?tier:(\d+):([SABC]\+?|-)$/m;
 const LOGIN_RE = /^(?:-# )?login:([A-Z2-9]{8}):(\d+):(\d+)$/m;
+const PDATA_RE = /^(?:-# )?pdata:(\d+):([A-Za-z0-9_-]+)$/m;
+const TEAM_COUNT = 12;
+const MAX_HEARTS = 4;
+const MAX_DESCRIPTION = 200;
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // ohne 0/O und 1/I
 const CODE_MINUTES = 10;
 const ADMINISTRATOR = 1n << 3n;
@@ -56,6 +62,7 @@ export default {
     if (request.method === "POST" && path === "/auth/code") return authCode(request, env);
     if (request.method === "GET" && path === "/auth/me") return authMe(request, env);
     if (request.method === "POST" && path === "/tierlist") return tierSave(request, env, ctx);
+    if (request.method === "POST" && path === "/player") return playerSave(request, env, ctx);
     if (request.method !== "POST") return new Response("Discord-Minecraft-Worker läuft.");
 
     const body = await request.text();
@@ -253,6 +260,19 @@ function parseNames(contents) {
 }
 
 // Map discordId -> Tier; "-" (nicht eingestuft) wird weggelassen
+// Map discordId -> { team, heartsLost, kills, description }
+function parsePlayers(contents) {
+  const latest = new Map();
+  for (const content of contents) {
+    const m = PDATA_RE.exec(content);
+    if (!m || latest.has(m[1])) continue;
+    try {
+      latest.set(m[1], JSON.parse(new TextDecoder().decode(fromB64url(m[2]))));
+    } catch {}
+  }
+  return latest;
+}
+
 function parseTiers(contents) {
   const latest = new Map();
   for (const content of contents) {
@@ -309,6 +329,7 @@ async function buildMembers(env) {
     : await channelContents(env, tierChannel, botId);
   const names = parseNames(mcContents);
   const tiers = parseTiers(tierContents);
+  const playerData = parsePlayers(tierContents);
 
   const rolesById = new Map(roles.map(r => [r.id, r]));
   const rolesByKey = new Map();
@@ -332,6 +353,10 @@ async function buildMembers(env) {
           minecraft: mc?.name ?? null,
           minecraftUuid: mc?.uuid ?? null,
           tier: tiers.get(m.user.id) ?? null,
+          team: playerData.get(m.user.id)?.team ?? null,
+          heartsLost: playerData.get(m.user.id)?.heartsLost ?? 0,
+          kills: playerData.get(m.user.id)?.kills ?? 0,
+          description: playerData.get(m.user.id)?.description ?? "",
           roles: roleIds.filter(id => m.roles.includes(id)),
           joinedAt: m.joined_at ?? null,
         };
@@ -352,7 +377,14 @@ async function buildMembers(env) {
   }
   result.sort((a, b) => b.position - a.position);
   for (const r of result) delete r.position;
-  return { guild: guild.name, updatedAt: new Date().toISOString(), tiers: TIERS, roles: result };
+  return {
+    guild: guild.name,
+    updatedAt: new Date().toISOString(),
+    tiers: TIERS,
+    teamCount: TEAM_COUNT,
+    maxHearts: MAX_HEARTS,
+    roles: result,
+  };
 }
 
 async function fetchAllMembers(env, guildId) {
@@ -511,20 +543,21 @@ async function authMe(request, env) {
   return withCors(json({ id: session.uid, name: session.name, expires: session.exp }));
 }
 
-async function tierSave(request, env, ctx) {
+// Gemeinsamer Rahmen für Änderungen durchs Team: Sitzung und Rechte prüfen, Spieler prüfen,
+// Eintrag als Nachricht im Tier-Kanal speichern. build() liefert { content, result } oder { error }.
+async function teamWrite(request, env, ctx, build) {
   try {
     const session = await sessionFrom(request, env);
     if (!session) return withCors(json({ error: "Bitte neu anmelden." }, 401));
-    if (!(await isTeamUser(env, session.uid))) return withCors(json({ error: "Nur das Team darf die Tierlist ändern." }, 403));
+    if (!(await isTeamUser(env, session.uid))) return withCors(json({ error: "Nur das Team darf das ändern." }, 403));
 
     const body = await request.json().catch(() => ({}));
     const player = String(body.player ?? "");
-    const tier = body.tier ?? null;
-    if (!/^\d{5,25}$/.test(player) || (tier !== null && !TIERS.includes(tier))) {
-      return withCors(json({ error: "Ungültige Angaben." }, 400));
-    }
+    if (!/^\d{5,25}$/.test(player)) return withCors(json({ error: "Ungültige Angaben." }, 400));
+    const entry = build(body, player, session);
+    if (entry.error) return withCors(json({ error: entry.error }, 400));
 
-    // Nur Spieler mit einer der Website-Rollen dürfen eingestuft werden
+    // Nur Spieler mit einer der Website-Rollen
     const guildId = env.GUILD_ID || DEFAULT_GUILD_ID;
     const roleIds = (env.ROLE_IDS || DEFAULT_ROLE_IDS).split(",").map(s => s.trim());
     const member = await discord(env, `/guilds/${guildId}/members/${player}`, "GET").catch(() => null);
@@ -532,20 +565,63 @@ async function tierSave(request, env, ctx) {
       return withCors(json({ error: "Dieser Spieler ist kein Teilnehmer." }, 400));
     }
 
-    const channel = env.TIER_CHANNEL_ID || env.MC_CHANNEL_ID;
-    await discord(env, `/channels/${channel}/messages`, "POST", {
-      content: `<@${player}> → ${tier ? `Tier **${tier}**` : "*nicht eingestuft*"} (von <@${session.uid}>)\n` +
-        `-# tier:${player}:${tier ?? "-"}`,
-      allowed_mentions: { parse: [] }, // Spieler nicht über ihr Tier benachrichtigen
+    await discord(env, `/channels/${tierChannel(env)}/messages`, "POST", {
+      content: entry.content,
+      allowed_mentions: { parse: [] }, // Spieler nicht benachrichtigen
     });
 
     // Zwischengespeicherte Mitgliederliste verwerfen, damit die Änderung sofort sichtbar ist
     ctx.waitUntil(caches.default.delete(new Request(new URL("/members.json", request.url).toString())));
-    return withCors(json({ ok: true, player, tier }));
+    return withCors(json({ ok: true, ...entry.result }));
   } catch (err) {
     console.error(err);
     return withCors(json({ error: "Speichern fehlgeschlagen: " + String(err.message).slice(0, 150) }, 502));
   }
+}
+
+async function tierSave(request, env, ctx) {
+  return teamWrite(request, env, ctx, (body, player, session) => {
+    const tier = body.tier ?? null;
+    if (tier !== null && !TIERS.includes(tier)) return { error: "Ungültige Angaben." };
+    return {
+      content: `<@${player}> → ${tier ? `Tier **${tier}**` : "*nicht eingestuft*"} (von <@${session.uid}>)\n` +
+        `-# tier:${player}:${tier ?? "-"}`,
+      result: { player, tier },
+    };
+  });
+}
+
+// Spielerdaten: Team, verlorene Herzen, Kills, Beschreibung (als JSON in base64url)
+async function playerSave(request, env, ctx) {
+  return teamWrite(request, env, ctx, (body, player, session) => {
+    const data = cleanPlayerData(body);
+    if (data.error) return data;
+    const summary = `${data.team ? "Team " + data.team : "kein Team"} · ` +
+      `${data.heartsLost} ${data.heartsLost === 1 ? "Herz" : "Herzen"} verloren · ${data.kills} Kills`;
+    const encoded = b64url(new TextEncoder().encode(JSON.stringify(data)));
+    return {
+      content: `<@${player}> → ${summary} (von <@${session.uid}>)\n-# pdata:${player}:${encoded}`,
+      result: { player, ...data },
+    };
+  });
+}
+
+function cleanPlayerData(body) {
+  const int = (value, min, max) => {
+    const n = Number(value);
+    return Number.isInteger(n) && n >= min && n <= max ? n : null;
+  };
+  const team = body.team === null || body.team === "" || body.team === undefined ? null : int(body.team, 1, TEAM_COUNT);
+  if (team === null && body.team !== null && body.team !== "" && body.team !== undefined) {
+    return { error: `Team muss zwischen 1 und ${TEAM_COUNT} liegen.` };
+  }
+  const heartsLost = int(body.heartsLost ?? 0, 0, MAX_HEARTS);
+  if (heartsLost === null) return { error: `Verlorene Herzen: 0 bis ${MAX_HEARTS}.` };
+  const kills = int(body.kills ?? 0, 0, 9999);
+  if (kills === null) return { error: "Kills: eine Zahl von 0 bis 9999." };
+  const description = String(body.description ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+  if (description.length > MAX_DESCRIPTION) return { error: `Beschreibung: höchstens ${MAX_DESCRIPTION} Zeichen.` };
+  return { team, heartsLost, kills, description };
 }
 
 // Signierte Daten: base64url(JSON) + "." + base64url(HMAC-SHA256), Schlüssel = SESSION_SECRET oder Bot-Token
