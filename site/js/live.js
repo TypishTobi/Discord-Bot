@@ -19,7 +19,13 @@
   function read(k){try{return localStorage.getItem(k);}catch(e){return null;}}
 
   // ---- Daten laden: live vom Worker, sonst die von GitHub erzeugte Kopie ----
-  function getJSON(url){return fetch(url,{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error(r.status);return r.json();});}
+  // Höchstens 10 Sekunden warten, danach gilt die Anfrage als fehlgeschlagen (dann greift die GitHub-Kopie)
+  function getJSON(url){
+    var ctrl=window.AbortController?new AbortController():null,timer=ctrl&&setTimeout(function(){ctrl.abort();},10000);
+    return fetch(url,{cache:"no-store",signal:ctrl?ctrl.signal:undefined})
+      .then(function(r){if(!r.ok)throw new Error(r.status);return r.json();})
+      .finally(function(){if(timer)clearTimeout(timer);});
+  }
   // quiet: Hintergrund-Aktualisierung; bei einem Fehler bleibt die bisherige Anzeige stehen
   function load(quiet){
     var source=getJSON(WORKER+"/members.json");

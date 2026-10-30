@@ -427,19 +427,17 @@ async function buildMembers(env) {
   let livesSynced = false;
   if (env.MOD_API_URL && env.MOD_API_TOKEN) {
     const players = result.flatMap(r => r.members);
-    try {
-      const lives = await fetchModLives(env);
-      applyLivesToTeams(env, lives, players, teams);
-      applyStats(players, lives);
+    // Leben und Stats gleichzeitig abfragen; ein Fehler bei einem bricht das andere nicht ab
+    const [livesRes, statsRes] = await Promise.allSettled([fetchModLives(env), fetchModStats(env)]);
+    if (livesRes.status === "fulfilled") {
+      applyLivesToTeams(env, livesRes.value, players, teams);
+      applyStats(players, livesRes.value);
       livesSynced = true;
-    } catch (err) {
-      console.error("Mod-API nicht erreichbar, nutze gespeicherte Herzen:", err.message);
+    } else {
+      console.error("Mod-API nicht erreichbar, nutze gespeicherte Herzen:", livesRes.reason?.message);
     }
-    try {
-      applyStats(players, (await fetchModStats(env)).list);
-    } catch (err) {
-      console.error("Mod-Stats nicht abrufbar:", err.message);
-    }
+    if (statsRes.status === "fulfilled") applyStats(players, statsRes.value.list);
+    else console.error("Mod-Stats nicht abrufbar:", statsRes.reason?.message);
   }
 
   return {
@@ -461,6 +459,7 @@ async function buildMembers(env) {
 //   MOD_SERVER_ID    Optional; nur diesen Server abfragen (?server_id=…), sonst alle
 //   MOD_START_LIVES  Optional; Leben, mit denen ein Spieler startet (Standard 3)
 
+const MOD_API_TIMEOUT_MS = 4000;
 const NAME_KEYS = ["name", "player", "spieler", "username", "playerName", "player_name", "minecraft", "mc_name"];
 const UUID_KEYS = ["uuid", "player_uuid", "playerUuid", "id"];
 // Diese Felder sind keine Statistik (Kennungen, Server, Zeitstempel, Mod-interne Angaben)
@@ -469,7 +468,11 @@ const NOT_STATS = /^(name|player|spieler|username|playername|player_name|minecra
 async function fetchModJson(env, path) {
   const base = env.MOD_API_URL.replace(/\/+$/, "");
   const url = base + path + (env.MOD_SERVER_ID ? "?server_id=" + encodeURIComponent(env.MOD_SERVER_ID) : "");
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${env.MOD_API_TOKEN}`, Accept: "application/json" } });
+  // Höchstens 4 Sekunden warten: hängt die Mod, nutzt die Website die gespeicherten Werte
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${env.MOD_API_TOKEN}`, Accept: "application/json" },
+    signal: AbortSignal.timeout(MOD_API_TIMEOUT_MS),
+  });
   if (!res.ok) throw Object.assign(new Error(`Mod-API ${res.status} bei ${path}`), { status: res.status });
   return res.json();
 }
