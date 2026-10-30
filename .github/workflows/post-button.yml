@@ -1,12 +1,17 @@
-name: Minecraft-Button posten
+name: Regelwerk mit Button posten
 
-# Einmalig manuell starten: postet die Nachricht mit dem Button in den angegebenen Kanal.
+# Manuell starten: postet Regelwerk (rules/regelwerk.md) + Button in den Kanal.
+# Mit Nachricht-ID wird die bestehende Nachricht aktualisiert (z. B. nach Regeländerungen).
 on:
   workflow_dispatch:
     inputs:
       channel_id:
-        description: "Kanal-ID, in die der Button gepostet wird (z. B. #regeln)"
+        description: "Kanal-ID (z. B. #regelwerk)"
         required: true
+      message_id:
+        description: "Optional: ID der bestehenden Bot-Nachricht, die aktualisiert werden soll"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -20,4 +25,6 @@ jobs:
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           CHANNEL_ID: ${{ inputs.channel_id }}
-        run: python3 scripts/post_button.py "$CHANNEL_ID"
+          MESSAGE_ID: ${{ inputs.message_id }}
+          CODEWORD: ${{ vars.CODEWORD }}
+        run: python3 scripts/post_button.py "$CHANNEL_ID" "$MESSAGE_ID"

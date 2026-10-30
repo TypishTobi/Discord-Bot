@@ -1,7 +1,8 @@
-"""Postet die Nachricht mit dem "Minecraft-Name eintragen"-Button in einen Kanal.
+"""Postet das Regelwerk mit dem "Minecraft-Name eintragen"-Button in einen Kanal.
 
-Aufruf:  python3 scripts/post_button.py <kanal-id>
-Umgebungsvariable: DISCORD_TOKEN
+Aufruf:  python3 scripts/post_button.py <kanal-id> [<nachricht-id>]
+Mit Nachricht-ID wird die bestehende Nachricht des Bots bearbeitet statt neu gepostet.
+Umgebungsvariablen: DISCORD_TOKEN, CODEWORD (ersetzt {CODEWORD} in rules/regelwerk.md)
 """
 import json
 import os
@@ -10,6 +11,7 @@ import urllib.error
 import urllib.request
 
 API = "https://discord.com/api/v10"
+RULES_FILE = os.path.join(os.path.dirname(__file__), "..", "rules", "regelwerk.md")
 
 MESSAGE = {
     "embeds": [{
@@ -35,18 +37,34 @@ MESSAGE = {
 }
 
 
+def build_message(codeword):
+    with open(RULES_FILE, encoding="utf-8") as f:
+        rules = f.read().strip()
+    if "{CODEWORD}" in rules:
+        if not codeword:
+            sys.exit("CODEWORD fehlt (Repo-Variable), wird im Regelwerk gebraucht.")
+        rules = rules.replace("{CODEWORD}", codeword)
+    if len(rules.encode("utf-16-le")) // 2 > 4096:
+        sys.exit("Regelwerk ist länger als 4096 Zeichen (Discord-Limit für ein Embed).")
+    rules_embed = {"description": rules, "color": MESSAGE["embeds"][0]["color"]}
+    return {**MESSAGE, "embeds": [rules_embed, *MESSAGE["embeds"]]}
+
+
 def main():
-    if len(sys.argv) != 2 or not sys.argv[1].strip().isdigit():
+    args = [a.strip() for a in sys.argv[1:] if a.strip()]
+    if not 1 <= len(args) <= 2 or not all(a.isdigit() for a in args):
         sys.exit(__doc__)
-    channel_id = sys.argv[1].strip()
+    channel_id, message_id = args[0], (args[1] if len(args) == 2 else None)
     token = os.environ.get("DISCORD_TOKEN", "").strip()
     if not token:
         sys.exit("DISCORD_TOKEN fehlt.")
+    message = build_message(os.environ.get("CODEWORD", "").strip())
 
+    url = f"{API}/channels/{channel_id}/messages" + (f"/{message_id}" if message_id else "")
     req = urllib.request.Request(
-        f"{API}/channels/{channel_id}/messages",
-        data=json.dumps(MESSAGE).encode(),
-        method="POST",
+        url,
+        data=json.dumps(message).encode(),
+        method="PATCH" if message_id else "POST",
         headers={
             "Authorization": f"Bot {token}",
             "Content-Type": "application/json",
@@ -55,7 +73,7 @@ def main():
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as res:
-            print("Button gepostet, Nachricht-ID:", json.load(res)["id"])
+            print("Bearbeitet" if message_id else "Gepostet", "- Nachricht-ID:", json.load(res)["id"])
     except urllib.error.HTTPError as err:
         hint = {403: "Der Bot braucht in diesem Kanal 'Kanal ansehen' und 'Nachrichten senden'.",
                 404: "Kanal nicht gefunden: ID prüfen."}.get(err.code, err.read().decode(errors="replace"))
