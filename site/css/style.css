@@ -512,6 +512,13 @@ footer .btn{padding:9px 18px;font-size:15px}
 .team-add:focus{outline:2px solid var(--bolt);outline-offset:1px}
 .gen-tag{font-style:normal;font-family:var(--f-body);font-size:11px;font-weight:700;color:#08111f;background:var(--ice);border-radius:4px;padding:1px 6px;margin-left:8px;vertical-align:middle;text-transform:uppercase;letter-spacing:.04em}
 
+/* Map-Pop-up */
+.lightbox{max-width:min(96vw,1200px);max-height:96vh;padding:0;background:transparent;border:0;overflow:visible;cursor:zoom-out}
+.lightbox::backdrop{background:rgba(3,8,18,.88);backdrop-filter:blur(4px)}
+.lightbox img{display:block;max-width:min(96vw,1200px);max-height:92vh;width:auto;height:auto;border:2px solid var(--ice);border-radius:12px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+.lightbox-close{position:absolute;top:-16px;right:-16px;width:40px;height:40px;font-size:26px;line-height:1;color:#fff;background:var(--panel);border:1px solid var(--ice);border-radius:50%;cursor:pointer}
+@media (max-width:620px){.lightbox-close{top:8px;right:8px}}
+
 /* Creator live */
 #creator-grid{margin-top:8px}
 .creator-item{position:relative;min-width:0}

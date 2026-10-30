@@ -99,6 +99,21 @@
     requestAnimationFrame(frame);
   })();
 
+  // Map groß im Pop-up statt in einem neuen Tab (ohne JavaScript bleibt der normale Link)
+  var mapLink=document.querySelector(".map-viz a");
+  if(mapLink){
+    mapLink.removeAttribute("target");
+    var box=document.createElement("dialog");box.className="lightbox";box.setAttribute("aria-label","Offizielle Map");
+    box.innerHTML='<button type="button" class="lightbox-close" aria-label="Schließen">×</button><img alt="">';
+    var big=box.querySelector("img");big.alt=mapLink.querySelector("img").alt;
+    document.body.appendChild(box);
+    mapLink.addEventListener("click",function(e){
+      if(!box.showModal)return; // sehr alte Browser: normaler Link
+      e.preventDefault();big.src=mapLink.href;box.showModal();
+    });
+    box.addEventListener("click",function(){box.close();}); // Klick irgendwo schließt
+  }
+
   // Navigation wird fest, sobald der Hero verlassen wird
   var nav=document.getElementById("nav");
   function navState(){nav.classList.toggle("solid",window.scrollY>60);}
