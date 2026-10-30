@@ -14,14 +14,14 @@
 <nav class="nav" id="nav" aria-label="Hauptnavigation">
   <div class="wrap">
     <ul>
-      <li><a href="#projekt">Projekt</a></li>
-      <li><a href="#teams">Teams</a></li>
-      <li><a href="#tierlist">Tierlist</a></li>
-      <li><a href="#creator">Creator</a></li>
-      <li><a href="#regeln">Regeln</a></li>
-      <li><a href="#ablauf">Ablauf</a></li>
-      <li><a href="#team">Team</a></li>
-      <li><a href="#faq">FAQ</a></li>
+      <li><a href="index.html" aria-current="page">Projekt</a></li>
+      <li><a href="teams.html">Teams</a></li>
+      <li><a href="tierlist.html">Tierlist</a></li>
+      <li><a href="creator.html">Creator</a></li>
+      <li><a href="regeln.html">Regeln</a></li>
+      <li><a href="ablauf.html">Ablauf</a></li>
+      <li><a href="team.html">Team</a></li>
+      <li><a href="faq.html">FAQ</a></li>
     </ul>
     <a class="btn dc nav-btn" href="https://discord.gg/ejKCz67QeP" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189z"/></svg> Discord</a>
   </div>
@@ -68,81 +68,16 @@
     </dl>
   </section>
 
-  <section id="teams">
-    <h2>12 Teams, vier Spieler pro Team</h2>
-    <p class="lead">Die Teams werden per Tierlist zusammengestellt. In jedem Team gibt es einen General und drei weitere Rollen.</p>
-    <div class="teams" id="teams-grid"></div>
-    <p class="note">Die Einteilung wird hier eingetragen, sobald die Tierlist steht.</p>
-  </section>
-
-  <section id="tierlist">
-    <div class="tier-head">
-      <div>
-        <h2>Tierlist</h2>
-        <p class="lead">So stuft das Team die Spieler ein. Aus der Tierlist entstehen die 12 Teams.</p>
-      </div>
-      <div class="tier-auth" id="tier-auth"></div>
-    </div>
-    <p class="tier-msg" id="tier-msg" role="status" aria-live="polite"></p>
-    <div class="tierlist" id="tier-board"><p class="note">Tierlist wird geladen …</p></div>
-  </section>
-
-  <section id="creator">
-    <h2>Die Creator von Radius 2</h2>
-    <p class="lead">Schau zu, wie sie es durch die fünf Wochen schaffen. Ein Klick führt dich zum Kanal.</p>
-    <div class="creators" id="creators"></div>
-    <h3 class="sub">Mitspielen</h3>
-    <div class="cgrid" id="cplay"></div>
-    <h3 class="sub">Schauen zu</h3>
-    <div class="cgrid watch" id="cwatch"></div>
-  </section>
-
-  <section id="regeln">
-    <h2>So wird gespielt</h2>
-    <ul class="rules">
-      <li class="rule"><h3>4 Team-Herzen</h3><p>Jedes Team startet mit vier gemeinsamen Herzen. Herzen gehen nur im Combat verloren, nirgendwo sonst.</p></li>
-      <li class="rule"><h3>Kein Verrat, kein Wechsel</h3><p>Wer in einem Team steht, bleibt dort. Teams werden nicht gewechselt und nicht hintergangen.</p></li>
-      <li class="rule"><h3>Teams per Tierlist</h3><p>12 Teams mit je 4 Spielern, also 48 Spieler. Die Einteilung entsteht über eine Tierlist.</p></li>
-      <li class="rule"><h3>General und Rollen</h3><p>Pro Team gibt es einen General und drei weitere Rollen.</p></li>
-      <li class="rule"><h3>Limits im Combat</h3><p>Im Kampf sind 32 Enderperlen und 64 Cobwebs erlaubt. Außerdem gilt Armorlock.</p></li>
-      <li class="rule"><h3>Hauptevents</h3><p>Im 1. Hauptevent kann ein Team ein Herz holen. Im 2. Hauptevent gibt es Loot, dazu kommen Lootdrops.</p></li>
-    </ul>
-  </section>
-
-  <section id="ablauf">
-    <h2>Was wann passiert</h2>
-    <div class="tl-layout">
-      <figure class="map-viz">
-        <a href="assets/map.jpg" target="_blank" rel="noopener" aria-label="Offizielle Map in voller Größe öffnen">
-          <img src="assets/map.jpg" alt="Offizielle Radius-2-Map: Inseln mit Arena in der Mitte, umgeben von vier markierten Gebieten" width="1084" height="1070" loading="lazy">
-        </a>
-        <figcaption>Die offizielle Map, 4k × 4k. Klick für die volle Größe.</figcaption>
-      </figure>
-      <ol class="timeline">
-        <li class="done"><time datetime="2026-10-29">29.10.2026</time><h3>Trailer &amp; Website</h3><p>Erster Einblick in Radius 2 und die Regeln.</p></li>
-        <li><time datetime="2026-11-20">20.11.2026</time><h3>Start</h3><p>12 Teams starten auf der 4k-Map. Der Countdown oben läuft bis 18:00 Uhr.</p></li>
-        <li><time>Während der 5 Wochen</time><h3>1. Hauptevent</h3><p>Hier kann ein Team ein Herz holen.</p></li>
-        <li><time>Während der 5 Wochen</time><h3>2. Hauptevent</h3><p>Hier gibt es Loot für die Teams.</p></li>
-        <li><time>Zwischendurch</time><h3>Lootdrops</h3><p>Lootdrops auf der Map belohnen die, die zuerst da sind.</p></li>
-      </ol>
-    </div>
-  </section>
-
-  <section id="team">
-    <h2>Das Team</h2>
-    <p class="lead">Diese Leute sorgen dafür, dass Radius 2 läuft.</p>
-    <div class="staff" id="staff"></div>
-    <div class="roster" id="roster"></div>
-  </section>
-
-  <section id="faq">
-    <h2>Häufig gefragt</h2>
-    <div class="faq">
-      <details><summary>Wo kann ich zuschauen?</summary><p>Auf den YouTube-Kanälen der Creator. Alle Links findest du oben im Bereich Creator.</p></details>
-      <details><summary>Wie werden die Teams gebildet?</summary><p>Die 12 Teams mit je 4 Spielern entstehen über eine Tierlist.</p></details>
-      <details><summary>Wie lange läuft Radius 2?</summary><p>Ungefähr fünf Wochen ab dem Start am 20. November 2026.</p></details>
-      <details><summary>Wann verliert ein Team Herzen?</summary><p>Nur im Combat. Jedes Team hat insgesamt vier Team-Herzen.</p></details>
-      <details><summary>Ist das ein offizielles Projekt?</summary><p>Nein. Radius 2 ist ein Fanprojekt, das sich an Minecraft Helden orientiert. Es steht in keiner Verbindung zu Mojang, Microsoft oder den Machern von Minecraft Helden.</p></details>
+  <section id="entdecken">
+    <h2>Mehr zu Radius 2</h2>
+    <div class="pages">
+      <a class="page-card" href="teams.html"><h3>Teams</h3><p>12 Teams mit je vier Spielern und vier Herzen.</p></a>
+      <a class="page-card" href="tierlist.html"><h3>Tierlist</h3><p>So stuft das Team die Spieler ein.</p></a>
+      <a class="page-card" href="creator.html"><h3>Creator</h3><p>Wer mitspielt und wo du zuschauen kannst.</p></a>
+      <a class="page-card" href="regeln.html"><h3>Regeln</h3><p>Herzen, Combat-Limits und Hauptevents.</p></a>
+      <a class="page-card" href="ablauf.html"><h3>Ablauf</h3><p>Die Map und was wann passiert.</p></a>
+      <a class="page-card" href="team.html"><h3>Team</h3><p>Die Leute hinter Radius 2.</p></a>
+      <a class="page-card" href="faq.html"><h3>FAQ</h3><p>Antworten auf häufige Fragen.</p></a>
     </div>
   </section>
 
@@ -158,6 +93,5 @@
 
 <script src="js/data.js"></script>
 <script src="js/main.js"></script>
-<script src="js/live.js"></script>
 </body>
 </html>

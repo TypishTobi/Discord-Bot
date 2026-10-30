@@ -11,7 +11,7 @@
   function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
   function head(p){return "https://minotar.net/helm/"+encodeURIComponent(p.minecraftUuid||"MHF_Steve")+"/64.png";}
   function headImg(p,size){var i=el("img","mc-head");i.src=head(p);i.alt="";i.width=size;i.height=size;return i;}
-  function say(text,bad){msg.textContent=text||"";msg.classList.toggle("bad",!!bad);}
+  function say(text,bad){if(!msg)return;msg.textContent=text||"";msg.classList.toggle("bad",!!bad);}
   function store(k,v){try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v);}catch(e){}}
   function read(k){try{return localStorage.getItem(k);}catch(e){return null;}}
 
@@ -23,7 +23,7 @@
       (data.roles||[]).forEach(function(role){(role.members||[]).forEach(function(m){if(!seen[m.id]){seen[m.id]=1;players.push(m);}});});
       if(data.tiers&&data.tiers.length)tiers=data.tiers;
       renderRoster();renderBoard();
-    }).catch(function(){board.innerHTML='<p class="note">Die Tierlist konnte gerade nicht geladen werden.</p>';});
+    }).catch(function(){if(board)board.innerHTML='<p class="note">Die Tierlist konnte gerade nicht geladen werden.</p>';});
   }
 
   // ---- Team: alle mit Rang im Discord-Namen ("Admin | Mrtx"), gruppiert nach Rang ----
@@ -74,6 +74,7 @@
   }
   function byName(a,b){return (a.name||a.displayName).localeCompare(b.name||b.displayName,"de");}
   function renderBoard(){
+    if(!board)return;
     board.textContent="";
     if(!players.length){board.appendChild(el("p","note","Noch keine Spieler."));return;}
     board.classList.toggle("editing",editing());
@@ -92,6 +93,7 @@
       .then(function(){say((p.name||p.displayName)+" → "+(tier||"offen")+" gespeichert.");})
       .catch(function(e){p.tier=before;renderBoard();say(e.message||"Speichern fehlgeschlagen.",true);if(e.status===401||e.status===403)logout(true);});
   }
+  if(board){
   board.addEventListener("click",function(e){
     if(!editing())return;
     var c=e.target.closest(".tchip"),lab=e.target.closest(".tier-label");
@@ -108,10 +110,12 @@
   board.addEventListener("dragover",function(e){var r=e.target.closest(".tier-row");if(r&&editing()){e.preventDefault();e.dataTransfer.dropEffect="move";clearOver();r.classList.add("over");}});
   board.addEventListener("dragleave",function(e){var r=e.target.closest(".tier-row");if(r&&!r.contains(e.relatedTarget))r.classList.remove("over");});
   board.addEventListener("drop",function(e){var r=e.target.closest(".tier-row");if(!r||!editing())return;e.preventDefault();clearOver();move(e.dataTransfer.getData("text/plain"),r.dataset.tier||null);});
+  }
   function clearOver(){[].forEach.call(board.querySelectorAll(".over"),function(x){x.classList.remove("over");});}
 
   // ---- Discord-Login fürs Team ----
   function renderAuth(){
+    if(!authBox)return;
     authBox.textContent="";
     if(me){
       authBox.appendChild(el("span","tier-who","Angemeldet als "+me.name));
@@ -139,7 +143,7 @@
   // Rückkehr vom Discord-Login: #session=... oder #login=...
   var hash=location.hash.slice(1),notes={"login=kein-team":"Die Tierlist kann nur das Team ab Mod bearbeiten.","login=abgebrochen":"Anmeldung abgebrochen.","login=fehler":"Anmeldung fehlgeschlagen. Bitte versuche es noch einmal."};
   if(hash.indexOf("session=")===0){store(SESSION_KEY,hash.slice(8));}
-  if(hash.indexOf("session=")===0||notes[hash]){
+  if(board&&(hash.indexOf("session=")===0||notes[hash])){
     history.replaceState(null,"",location.pathname+location.search+"#tierlist");
     if(notes[hash])say(notes[hash],hash!=="login=abgebrochen");
     setTimeout(function(){document.getElementById("tierlist").scrollIntoView();},0);
@@ -147,5 +151,5 @@
   session=read(SESSION_KEY);
 
   renderAuth();
-  load().then(checkSession);
+  load().then(function(){if(board)return checkSession();});
 })();

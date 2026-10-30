@@ -21,8 +21,9 @@
   function esc(s){var d=document.createElement("div");d.textContent=s;return d.innerHTML;}
 
   // 12 Teams mit je 4 Herzen und 4 Plätzen
+  // Jede Seite enthält nur ihre Abschnitte; fehlende werden übersprungen
   var tg=document.getElementById("teams-grid"),teams=window.RADIUS_TEAMS||[];
-  for(var t=0;t<12;t++){
+  for(var t=0;tg&&t<12;t++){
     var mem=teams[t]||[],el=document.createElement("article");el.className="team-card";
     var hs="";for(var k=0;k<4;k++)hs+=heartSVG(false);
     var slots="";for(var s=0;s<4;s++){slots+=mem[s]?'<li class="'+(s===0?"gen":"")+'">'+esc(mem[s])+(s===0?' <em>General</em>':'')+'</li>':'<li class="empty">'+(s===0?'General':'Platz '+(s+1))+'</li>';}
@@ -32,7 +33,7 @@
 
   // Creator: Featured, Mitspielende, Zuschauer
   var cbox=document.getElementById("creators");
-  (window.RADIUS_FEATURED||[]).forEach(function(c,i){
+  (cbox?window.RADIUS_FEATURED||[]:[]).forEach(function(c,i){
     var a=document.createElement("a");a.className="creator";a.href=ytUrl(c[0]);a.target="_blank";a.rel="noopener";
     a.setAttribute("aria-label",c[0]+" auf YouTube ansehen");
     var th=document.createElement("div");th.className="thumb";
@@ -43,7 +44,7 @@
     a.appendChild(th);a.appendChild(info);cbox.appendChild(a);
   });
   function chips(list,id,off){
-    var box=document.getElementById(id);
+    var box=document.getElementById(id);if(!box)return;
     list.forEach(function(n,i){
       var a=document.createElement("a");a.className="chip";a.href=ytUrl(n);a.target="_blank";a.rel="noopener";
       a.setAttribute("aria-label",n+" auf YouTube");
@@ -57,7 +58,7 @@
 
   // Staff (Karte im Stil: Bild, Name, Rolle, GitHub)
   var sbox=document.getElementById("staff");
-  (window.RADIUS_STAFF||[]).forEach(function(m){
+  (sbox?window.RADIUS_STAFF||[]:[]).forEach(function(m){
     var el=document.createElement("article");el.className="staff-card";
     var icon=m[3]?'<a class="gh" href="'+esc(m[3])+'" target="_blank" rel="noopener" aria-label="'+esc(m[0])+' auf GitHub">'+GH+'</a>':'<span class="gh" aria-hidden="true">'+GH+'</span>';
     el.innerHTML='<img src="'+esc(m[2])+'" alt="Profilbild von '+esc(m[0])+'" width="100" height="100"><h3>'+esc(m[0])+'</h3><p>'+esc(m[1])+'</p>'+icon;
@@ -108,6 +109,7 @@
   var ids=["c-d","c-h","c-m","c-s"].map(function(id){return document.getElementById(id);});
   function pad(n){return String(n).padStart(2,"0");}
   function tick(){
+    if(!ids[0])return;
     var ms=target-Date.now();
     if(ms<=0){document.getElementById("launch-sub").textContent="Radius 2 läuft. Viel Glück an alle Teams.";ids.forEach(function(e){e.textContent="00";});return;}
     var s=Math.floor(ms/1000);

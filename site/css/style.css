@@ -419,6 +419,24 @@ footer .btn{padding:9px 18px;font-size:15px}
 .nav-btn{grid-column:3}
 @media (max-width:760px){.nav-btn{grid-column:2}}
 
+/* ---- Mehrere Seiten: aktiver Menüpunkt, Menü auf dem Handy, Kacheln auf der Startseite ---- */
+.nav ul a[aria-current="page"]{color:#fff;box-shadow:inset 0 -2px 0 var(--ice)}
+.subpage main>section:first-child{padding-top:120px}
+@media (max-width:760px){
+  .nav .wrap{grid-template-columns:1fr auto;row-gap:8px}
+  .nav ul{display:flex;grid-row:2;grid-column:1/-1;justify-self:stretch;overflow-x:auto;scrollbar-width:none;-webkit-mask-image:linear-gradient(to right,#000 85%,transparent);mask-image:linear-gradient(to right,#000 85%,transparent)}
+  .nav ul::-webkit-scrollbar{display:none}
+  .nav ul a{white-space:nowrap;padding:6px 10px;font-size:14px}
+  .nav-btn{grid-row:1;grid-column:2}
+  .subpage main>section:first-child{padding-top:130px}
+}
+.pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px;margin-top:30px}
+.page-card{display:block;padding:20px 22px;background:linear-gradient(160deg,var(--panel),var(--deep));border:1px solid var(--line);border-radius:14px;color:var(--text);text-decoration:none;transition:border-color .2s,transform .2s}
+.page-card:hover{border-color:rgba(98,220,255,.55);transform:translateY(-2px)}
+.page-card h3{font-size:24px;color:var(--bolt)}
+.page-card h3::after{content:" →";color:var(--ice)}
+.page-card p{margin:6px 0 0;color:var(--soft);font-size:16px}
+
 /* ---- Live aus Discord: Minecraft-Köpfe, Team-Liste, Tierlist ---- */
 .mc-head{display:block;flex:none;image-rendering:pixelated;border-radius:4px;background:var(--deep)}
 
