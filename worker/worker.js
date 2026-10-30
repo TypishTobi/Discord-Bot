@@ -509,10 +509,10 @@ function extractPlayerStats(data) {
     if (typeof node !== "object") return;
     const name = NAME_KEYS.map(k => node[k]).find(v => typeof v === "string");
     const stats = statsOf(node);
+    // Stats können auch verschachtelt sein: { name, stats: { kills, … } }
+    if (name) for (const [, v] of Object.entries(node)) if (v && typeof v === "object" && !Array.isArray(v)) Object.assign(stats, statsOf(v));
     if (name && Object.keys(stats).length) {
       const uuid = UUID_KEYS.map(k => node[k]).find(v => typeof v === "string") || "";
-      // Stats können auch verschachtelt sein: { name, stats: { kills, … } }
-      for (const [, v] of Object.entries(node)) if (v && typeof v === "object" && !Array.isArray(v)) Object.assign(stats, statsOf(v));
       out.push({ name, uuid: uuid.replace(/-/g, "").toLowerCase(), stats });
       return;
     }
