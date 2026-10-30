@@ -15,7 +15,7 @@
 //   MC_CHANNEL_ID       ID des versteckten Kanals für die Namen
 //   CODEWORD            Codewort aus dem Regelwerk (als Secret, damit es nicht
 //                       im öffentlichen Repo steht; leer = keine Abfrage)
-//   MIN_ROLE_ID         Niedrigste Rolle, die /mcname benutzen darf (z. B. Mod);
+//   MIN_ROLE_ID         Optional (Standard siehe unten); niedrigste Rolle fürs Team (z. B. Mod);
 //                       alle Rollen darüber dürfen es auch
 //   GUILD_ID, ROLE_IDS  Optional; Standard siehe unten (Server/Rolle der Website)
 //   TIER_CHANNEL_ID     Optional; Kanal für Tier-Einträge und Login-Codes (Standard: MC_CHANNEL_ID)
@@ -40,6 +40,7 @@
 const API = "https://discord.com/api/v10";
 const DEFAULT_GUILD_ID = "1502797926982746224";
 const DEFAULT_ROLE_IDS = "1510380603479036054";
+const DEFAULT_MIN_ROLE_ID = "1510377990113198163"; // 🛡️ ┃ Moderator
 const DEFAULT_SITE_URL = "https://typishtobi.github.io/Discord-Bot/";
 const MEMBERS_CACHE_SECONDS = 60;
 const SESSION_HOURS = 12;
@@ -479,9 +480,9 @@ async function isTeamUser(env, userId) {
 }
 
 function rolesReachMin(env, roles, memberRoleIds) {
-  if (!env.MIN_ROLE_ID) return false;
+  const minRole = (env.MIN_ROLE_ID || DEFAULT_MIN_ROLE_ID).trim();
   const position = new Map(roles.map(r => [r.id, r.position]));
-  const min = position.get(env.MIN_ROLE_ID);
+  const min = position.get(minRole);
   if (min === undefined) throw new Error("MIN_ROLE_ID ist keine Rolle dieses Servers");
   return memberRoleIds.some(id => (position.get(id) ?? -1) >= min);
 }
