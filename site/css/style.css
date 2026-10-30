@@ -481,6 +481,17 @@ footer .btn{padding:9px 18px;font-size:15px}
 .tierlist.editing .tier-label{cursor:pointer}
 .tierlist.editing .tier-label:hover{filter:brightness(1.12)}
 .tier-row.over{background:rgba(98,220,255,.1)}
+/* Teams live: Mitglieder mit Kopf und Tier, gemeinsame Herzen (im Team-Login antippbar) */
+.heart-btn{display:block;background:none;border:0;padding:0;margin:0;line-height:0}
+.hearts.edit .heart-btn{cursor:pointer;transition:transform .15s}
+.hearts.edit .heart-btn:hover{transform:scale(1.18)}
+.team-card li.live{display:flex;align-items:center;gap:8px;min-width:0}
+.team-card li.live span:not(.tier-badge){flex:1;min-width:0;overflow-wrap:anywhere}
+.team-card li.live .mc-head{width:22px;height:22px;border-radius:3px}
+.tier-badge.mini{min-width:0;padding:1px 6px;font-size:12px;border-radius:4px}
+.team-card.out{opacity:.62}
+.team-card.out::before{background:var(--border-red)}
+
 /* Spieler-Seite */
 .player-filters{display:flex;flex-wrap:wrap;gap:12px 20px;margin:4px 0 22px}
 .pfilter{display:flex;align-items:center;gap:10px;font-size:15px;color:var(--soft)}

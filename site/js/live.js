@@ -6,9 +6,9 @@
   var WORKER="https://mc-namen.typischtobi66.workers.dev";
   var DEFAULT_TIERS=["S+","S","A+","A","B+","B","C+","C"];
   var SESSION_KEY="radius2-session",MAX_DESCRIPTION=200;
-  var board=document.getElementById("tier-board"),grid=document.getElementById("player-grid");
+  var board=document.getElementById("tier-board"),grid=document.getElementById("player-grid"),teamsGrid=document.getElementById("teams-grid");
   var authBox=document.getElementById("team-auth"),msg=document.getElementById("team-msg");
-  var players=[],tiers=DEFAULT_TIERS,teamCount=12,maxHearts=4,session=null,me=null,selected=null,editId=null;
+  var players=[],teams=[],tiers=DEFAULT_TIERS,teamCount=12,maxHearts=4,session=null,me=null,selected=null,editId=null;
 
   function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
   function head(p){return "https://minotar.net/helm/"+encodeURIComponent(p.minecraftUuid||"MHF_Steve")+"/64.png";}
@@ -26,13 +26,15 @@
       if(data.tiers&&data.tiers.length)tiers=data.tiers;
       if(data.teamCount)teamCount=data.teamCount;
       if(data.maxHearts)maxHearts=data.maxHearts;
+      teams=data.teams||[];
       renderRoster();rerender();
     }).catch(function(){
       if(board)board.innerHTML='<p class="note">Die Tierlist konnte gerade nicht geladen werden.</p>';
       if(grid)grid.innerHTML='<p class="note">Die Spieler konnten gerade nicht geladen werden.</p>';
     });
   }
-  function rerender(){renderBoard();renderPlayers();}
+  function rerender(){renderBoard();renderPlayers();renderTeams();}
+  function teamLost(n){var t=teams.filter(function(x){return x.team===n;})[0];return t?Math.min(t.heartsLost||0,maxHearts):0;}
 
   // ---- Team: alle mit Rang im Discord-Namen ("Admin | Mrtx"), gruppiert nach Rang ----
   function renderRoster(){
@@ -160,12 +162,16 @@
     var badge=el("span","tier-badge",p.tier||"–");if(p.tier)badge.dataset.t=p.tier;badge.title=p.tier?"Tier "+p.tier:"Noch nicht eingestuft";
     top.appendChild(badge);card.appendChild(top);
 
-    var stats=el("dl","pstats"),hearts=el("span","hearts"),lost=Math.min(p.heartsLost||0,maxHearts);
-    var h="";for(var i=0;i<maxHearts;i++)h+=heartSVG(i>=maxHearts-lost);hearts.innerHTML=h;
-    hearts.setAttribute("aria-label",lost+" von "+maxHearts+" Herzen verloren");
+    // Herzen gehören dem Team: die Karte zeigt die gemeinsamen Herzen seines Teams
+    var stats=el("dl","pstats"),hearts;
+    if(p.team){
+      var lost=teamLost(p.team),h="";hearts=el("span","hearts");
+      for(var i=0;i<maxHearts;i++)h+=heartSVG(i>=maxHearts-lost);hearts.innerHTML=h;
+      hearts.setAttribute("aria-label",(maxHearts-lost)+" von "+maxHearts+" Team-Herzen übrig");
+    }else hearts="–";
     stats.appendChild(stat("Team",p.team?"Team "+p.team:"–"));
     stats.appendChild(stat("Kills",String(p.kills||0)));
-    stats.appendChild(stat("Herzen verloren",hearts));
+    stats.appendChild(stat("Team-Herzen",hearts));
     card.appendChild(stats);
     card.appendChild(el("p","pdesc"+(p.description?"":" empty"),p.description||"Noch keine Beschreibung."));
     if(editing()){var b=el("button","pedit","Bearbeiten");b.type="button";b.dataset.edit=p.id;card.appendChild(b);}
@@ -178,7 +184,6 @@
     var team=el("select");var none=el("option",null,"Kein Team");none.value="";team.appendChild(none);
     for(var t=1;t<=teamCount;t++){var o=el("option",null,"Team "+t);o.value=String(t);team.appendChild(o);}
     team.value=p.team?String(p.team):"";field("Team",team);
-    var hearts=el("input");hearts.type="number";hearts.min=0;hearts.max=maxHearts;hearts.value=p.heartsLost||0;field("Herzen verloren (0–"+maxHearts+")",hearts);
     var kills=el("input");kills.type="number";kills.min=0;kills.max=9999;kills.value=p.kills||0;field("Kills",kills);
     var desc=el("textarea");desc.maxLength=MAX_DESCRIPTION;desc.rows=3;desc.value=p.description||"";
     var count=el("small","pcount");function upd(){count.textContent=desc.value.length+"/"+MAX_DESCRIPTION;}desc.oninput=upd;upd();
@@ -188,7 +193,7 @@
     row.appendChild(save);row.appendChild(cancel);f.appendChild(row);
     f.onsubmit=function(e){
       e.preventDefault();
-      savePlayer(p,{team:team.value?Number(team.value):null,heartsLost:Number(hearts.value),kills:Number(kills.value),description:desc.value.trim()});
+      savePlayer(p,{team:team.value?Number(team.value):null,kills:Number(kills.value),description:desc.value.trim()});
     };
     return f;
   }
@@ -207,7 +212,7 @@
   function savePlayer(p,data){
     say("Speichere …");
     post("/player",Object.assign({player:p.id},data))
-      .then(function(d){p.team=d.team;p.heartsLost=d.heartsLost;p.kills=d.kills;p.description=d.description;editId=null;renderPlayers();say((p.name||p.displayName)+" gespeichert.");})
+      .then(function(d){p.team=d.team;p.kills=d.kills;p.description=d.description;editId=null;renderPlayers();say((p.name||p.displayName)+" gespeichert.");})
       .catch(function(e){say(e.message||"Speichern fehlgeschlagen.",true);if(e.status===401||e.status===403)logout(true);});
   }
   if(grid){
@@ -215,6 +220,51 @@
       var b=e.target.closest("[data-edit]");if(!b||!editing())return;
       editId=b.dataset.edit;renderPlayers();
       var f=grid.querySelector(".pform select");if(f)f.focus();
+    });
+  }
+
+  // ---- Teams-Seite: 12 Teams mit Mitgliedern (aus den Spielerdaten) und gemeinsamen Herzen ----
+  function renderTeams(){
+    if(!teamsGrid)return;
+    var fixed=window.RADIUS_TEAMS||[];
+    teamsGrid.textContent="";
+    for(var n=1;n<=teamCount;n++){
+      var lost=teamLost(n),left=maxHearts-lost;
+      var live=players.filter(function(p){return p.team===n;}).sort(function(a,b){return tierRank(a)-tierRank(b)||byName(a,b);});
+      var card=el("article","team-card"+(left===0?" out":""));card.dataset.team=n;
+      card.appendChild(el("h3",null,"Team "+n));
+      var hearts=el("span","hearts"+(editing()?" edit":""));hearts.setAttribute("aria-label",left+" von "+maxHearts+" Team-Herzen übrig");
+      for(var i=0;i<maxHearts;i++){
+        // Volle Herzen links, verlorene rechts; im Bearbeiten-Modus antippen zum Verlieren/Zurückgeben
+        var isLost=i>=left,hb=el(editing()?"button":"span","heart-btn");hb.innerHTML=heartSVG(isLost);
+        if(editing()){hb.type="button";hb.dataset.team=n;hb.dataset.left=isLost?i+1:i;hb.title=isLost?"Herz zurückgeben":"Herz verloren";hb.setAttribute("aria-label","Team "+n+": "+hb.title);}
+        hearts.appendChild(hb);
+      }
+      card.appendChild(hearts);
+      var ul=el("ul");
+      for(var s=0;s<4;s++){
+        var p=live[s],name=p?(p.name||p.displayName):fixed[n-1]&&fixed[n-1][s];
+        if(name){
+          var li=el("li",s===0&&!p&&fixed[n-1]?"gen":"");
+          if(p){li.classList.add("live");li.appendChild(headImg(p,22));}
+          li.appendChild(el("span",null,name));
+          if(p&&p.tier){var tb=el("span","tier-badge mini",p.tier);tb.dataset.t=p.tier;li.appendChild(tb);}
+          ul.appendChild(li);
+        }else ul.appendChild(el("li","empty",s===0?"General":"Platz "+(s+1)));
+      }
+      card.appendChild(ul);teamsGrid.appendChild(card);
+    }
+  }
+  if(teamsGrid){
+    teamsGrid.addEventListener("click",function(e){
+      var b=e.target.closest(".heart-btn[data-team]");if(!b||!editing())return;
+      var n=Number(b.dataset.team),lost=maxHearts-Number(b.dataset.left),t=teams.filter(function(x){return x.team===n;})[0];
+      if(!t){t={team:n,heartsLost:0};teams.push(t);}
+      var before=t.heartsLost;if(before===lost)return;
+      t.heartsLost=lost;renderTeams();say("Speichere …");
+      post("/team",{team:n,heartsLost:lost})
+        .then(function(){say("Team "+n+": "+(maxHearts-lost)+" von "+maxHearts+" Herzen übrig.");})
+        .catch(function(e){t.heartsLost=before;renderTeams();say(e.message||"Speichern fehlgeschlagen.",true);if(e.status===401||e.status===403)logout(true);});
     });
   }
 
@@ -262,5 +312,5 @@
   session=read(SESSION_KEY);
 
   renderAuth();
-  load().then(function(){if(!board&&!grid)return;return linkCode?redeem(linkCode):checkSession();});
+  load().then(function(){if(!board&&!grid&&!teamsGrid)return;return linkCode?redeem(linkCode):checkSession();});
 })();

@@ -31,8 +31,10 @@
 // GET  /auth/me        Prüft eine Sitzung (Authorization: Bearer ...)
 // POST /tierlist       { player, tier } speichert ein Tier (nur Team ab MIN_ROLE_ID);
 //                      als Nachricht "tier:<discordId>:<tier>" im Tier-Kanal, neueste gilt
-// POST /player         { player, team, heartsLost, kills, description } speichert Spielerdaten;
+// POST /player         { player, team, kills, description } speichert Spielerdaten;
 //                      als "pdata:<discordId>:<base64url(JSON)>" im Tier-Kanal, neueste gilt
+// POST /team           { team, heartsLost } speichert die verlorenen Team-Herzen (gemeinsam
+//                      fürs ganze Team); als "team:<nummer>:<verloren>" im Tier-Kanal
 
 const API = "https://discord.com/api/v10";
 const DEFAULT_GUILD_ID = "1502797926982746224";
@@ -46,6 +48,7 @@ const ENTRY_RE = /^(?:-# )?(?:mc:(\d+):(\w{3,16}):([0-9a-f]{32})|mcdel:(\d+))$/m
 const TIER_RE = /^(?:-# )?tier:(\d+):([SABC]\+?|-)$/m;
 const LOGIN_RE = /^(?:-# )?login:([A-Z2-9]{8}):(\d+):(\d+)$/m;
 const PDATA_RE = /^(?:-# )?pdata:(\d+):([A-Za-z0-9_-]+)$/m;
+const TEAM_RE = /^(?:-# )?team:(\d+):(\d+)$/m;
 const TEAM_COUNT = 12;
 const MAX_HEARTS = 4;
 const MAX_DESCRIPTION = 200;
@@ -63,6 +66,7 @@ export default {
     if (request.method === "GET" && path === "/auth/me") return authMe(request, env);
     if (request.method === "POST" && path === "/tierlist") return tierSave(request, env, ctx);
     if (request.method === "POST" && path === "/player") return playerSave(request, env, ctx);
+    if (request.method === "POST" && path === "/team") return teamSave(request, env, ctx);
     if (request.method !== "POST") return new Response("Discord-Minecraft-Worker läuft.");
 
     const body = await request.text();
@@ -260,7 +264,17 @@ function parseNames(contents) {
 }
 
 // Map discordId -> Tier; "-" (nicht eingestuft) wird weggelassen
-// Map discordId -> { team, heartsLost, kills, description }
+// Liste aller Teams mit verlorenen Herzen (neueste Nachricht pro Team gilt)
+function parseTeams(contents) {
+  const lost = new Map();
+  for (const content of contents) {
+    const m = TEAM_RE.exec(content);
+    if (m && !lost.has(m[1])) lost.set(m[1], Math.min(Number(m[2]), MAX_HEARTS));
+  }
+  return Array.from({ length: TEAM_COUNT }, (_, i) => ({ team: i + 1, heartsLost: lost.get(String(i + 1)) ?? 0 }));
+}
+
+// Map discordId -> { team, kills, description }
 function parsePlayers(contents) {
   const latest = new Map();
   for (const content of contents) {
@@ -354,7 +368,6 @@ async function buildMembers(env) {
           minecraftUuid: mc?.uuid ?? null,
           tier: tiers.get(m.user.id) ?? null,
           team: playerData.get(m.user.id)?.team ?? null,
-          heartsLost: playerData.get(m.user.id)?.heartsLost ?? 0,
           kills: playerData.get(m.user.id)?.kills ?? 0,
           description: playerData.get(m.user.id)?.description ?? "",
           roles: roleIds.filter(id => m.roles.includes(id)),
@@ -383,6 +396,7 @@ async function buildMembers(env) {
     tiers: TIERS,
     teamCount: TEAM_COUNT,
     maxHearts: MAX_HEARTS,
+    teams: parseTeams(tierContents),
     roles: result,
   };
 }
@@ -545,7 +559,7 @@ async function authMe(request, env) {
 
 // Gemeinsamer Rahmen für Änderungen durchs Team: Sitzung und Rechte prüfen, Spieler prüfen,
 // Eintrag als Nachricht im Tier-Kanal speichern. build() liefert { content, result } oder { error }.
-async function teamWrite(request, env, ctx, build) {
+async function teamWrite(request, env, ctx, build, { requirePlayer = true } = {}) {
   try {
     const session = await sessionFrom(request, env);
     if (!session) return withCors(json({ error: "Bitte neu anmelden." }, 401));
@@ -553,16 +567,18 @@ async function teamWrite(request, env, ctx, build) {
 
     const body = await request.json().catch(() => ({}));
     const player = String(body.player ?? "");
-    if (!/^\d{5,25}$/.test(player)) return withCors(json({ error: "Ungültige Angaben." }, 400));
+    if (requirePlayer && !/^\d{5,25}$/.test(player)) return withCors(json({ error: "Ungültige Angaben." }, 400));
     const entry = build(body, player, session);
     if (entry.error) return withCors(json({ error: entry.error }, 400));
 
     // Nur Spieler mit einer der Website-Rollen
-    const guildId = env.GUILD_ID || DEFAULT_GUILD_ID;
-    const roleIds = (env.ROLE_IDS || DEFAULT_ROLE_IDS).split(",").map(s => s.trim());
-    const member = await discord(env, `/guilds/${guildId}/members/${player}`, "GET").catch(() => null);
-    if (!member || !member.roles.some(id => roleIds.includes(id))) {
-      return withCors(json({ error: "Dieser Spieler ist kein Teilnehmer." }, 400));
+    if (requirePlayer) {
+      const guildId = env.GUILD_ID || DEFAULT_GUILD_ID;
+      const roleIds = (env.ROLE_IDS || DEFAULT_ROLE_IDS).split(",").map(s => s.trim());
+      const member = await discord(env, `/guilds/${guildId}/members/${player}`, "GET").catch(() => null);
+      if (!member || !member.roles.some(id => roleIds.includes(id))) {
+        return withCors(json({ error: "Dieser Spieler ist kein Teilnehmer." }, 400));
+      }
     }
 
     await discord(env, `/channels/${tierChannel(env)}/messages`, "POST", {
@@ -591,13 +607,12 @@ async function tierSave(request, env, ctx) {
   });
 }
 
-// Spielerdaten: Team, verlorene Herzen, Kills, Beschreibung (als JSON in base64url)
+// Spielerdaten: Team, Kills, Beschreibung (als JSON in base64url)
 async function playerSave(request, env, ctx) {
   return teamWrite(request, env, ctx, (body, player, session) => {
     const data = cleanPlayerData(body);
     if (data.error) return data;
-    const summary = `${data.team ? "Team " + data.team : "kein Team"} · ` +
-      `${data.heartsLost} ${data.heartsLost === 1 ? "Herz" : "Herzen"} verloren · ${data.kills} Kills`;
+    const summary = `${data.team ? "Team " + data.team : "kein Team"} · ${data.kills} Kills`;
     const encoded = b64url(new TextEncoder().encode(JSON.stringify(data)));
     return {
       content: `<@${player}> → ${summary} (von <@${session.uid}>)\n-# pdata:${player}:${encoded}`,
@@ -615,13 +630,25 @@ function cleanPlayerData(body) {
   if (team === null && body.team !== null && body.team !== "" && body.team !== undefined) {
     return { error: `Team muss zwischen 1 und ${TEAM_COUNT} liegen.` };
   }
-  const heartsLost = int(body.heartsLost ?? 0, 0, MAX_HEARTS);
-  if (heartsLost === null) return { error: `Verlorene Herzen: 0 bis ${MAX_HEARTS}.` };
   const kills = int(body.kills ?? 0, 0, 9999);
   if (kills === null) return { error: "Kills: eine Zahl von 0 bis 9999." };
   const description = String(body.description ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
   if (description.length > MAX_DESCRIPTION) return { error: `Beschreibung: höchstens ${MAX_DESCRIPTION} Zeichen.` };
-  return { team, heartsLost, kills, description };
+  return { team, kills, description };
+}
+
+// Team-Herzen: jedes Team hat MAX_HEARTS gemeinsame Herzen
+async function teamSave(request, env, ctx) {
+  return teamWrite(request, env, ctx, (body, player, session) => {
+    const team = Number(body.team), lost = Number(body.heartsLost);
+    if (!Number.isInteger(team) || team < 1 || team > TEAM_COUNT) return { error: `Team muss zwischen 1 und ${TEAM_COUNT} liegen.` };
+    if (!Number.isInteger(lost) || lost < 0 || lost > MAX_HEARTS) return { error: `Verlorene Herzen: 0 bis ${MAX_HEARTS}.` };
+    const left = MAX_HEARTS - lost;
+    return {
+      content: `Team ${team} → ${left} von ${MAX_HEARTS} Herzen übrig (von <@${session.uid}>)\n-# team:${team}:${lost}`,
+      result: { team, heartsLost: lost },
+    };
+  }, { requirePlayer: false });
 }
 
 // Signierte Daten: base64url(JSON) + "." + base64url(HMAC-SHA256), Schlüssel = SESSION_SECRET oder Bot-Token
