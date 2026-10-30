@@ -2,7 +2,7 @@
 //
 // Ablauf: Klick auf den Button "mc_register" -> Eingabefenster -> Name wird bei
 // Mojang geprüft und als Nachricht "mc:<discordId>:<name>:<uuid>" in den
-// versteckten Kanal MC_CHANNEL_ID geschrieben. Das Abrufskript auf GitHub liest
+// versteckten Kanal MC_CHANNEL_ID geschrieben (mit Ping des Nutzers davor). Das Abrufskript auf GitHub liest
 // diesen Kanal; die neueste Nachricht pro Nutzer gilt.
 //
 // Benötigte Einstellungen im Worker (Settings -> Variables and Secrets):
@@ -95,9 +95,10 @@ async function handleSubmit(interaction, env) {
       if (!profile) {
         reply = `❌ Den Minecraft-Account **${input}** gibt es nicht. Bitte prüfe die Schreibweise.`;
       } else {
+        // Lesbare Zeile mit Ping, darunter klein die maschinenlesbare Zeile fürs Abrufskript
         await discord(env, `/channels/${env.MC_CHANNEL_ID}/messages`, "POST", {
-          content: `mc:${userId}:${profile.name}:${profile.id}`,
-          allowed_mentions: { parse: [] },
+          content: `<@${userId}> → **${profile.name}**\n-# mc:${userId}:${profile.name}:${profile.id}`,
+          allowed_mentions: { users: [userId] },
         });
         reply = `✅ Gespeichert! Dein Minecraft-Name ist **${profile.name}**. ` +
           "Auf der Website erscheint er beim nächsten Update (bis zu 15 Minuten). " +

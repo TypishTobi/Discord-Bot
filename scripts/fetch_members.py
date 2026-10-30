@@ -57,7 +57,8 @@ def fetch_all_members(guild_id, token):
         after = batch[-1]["user"]["id"]
 
 
-MC_RE = re.compile(r"^mc:(\d+):(\w{3,16}):([0-9a-f]{32})$")
+# Steht allein ("mc:…") oder als kleine Zeile "-# mc:…" unter dem Ping
+MC_RE = re.compile(r"^(?:-# )?mc:(\d+):(\w{3,16}):([0-9a-f]{32})$", re.M)
 
 
 def fetch_minecraft_names(channel_id, token):
@@ -71,7 +72,7 @@ def fetch_minecraft_names(channel_id, token):
             # Nur Nachrichten des eigenen Bots zählen, damit niemand Namen fälschen kann
             if msg["author"]["id"] != bot_id:
                 continue
-            match = MC_RE.match(msg.get("content", ""))
+            match = MC_RE.search(msg.get("content", ""))
             if match and match.group(1) not in names:
                 names[match.group(1)] = {"name": match.group(2), "uuid": match.group(3)}
         if len(batch) < 100:
