@@ -14,5 +14,4 @@ window.RADIUS_TEAMS=[
 
 // Staff: Name, Rolle, Bildpfad, GitHub-Link (leer lassen, wenn keiner)
 window.RADIUS_STAFF=[
-  ["MaximDe","Co-Founder & Executive Director","assets/maximde.png",""]
 ];
