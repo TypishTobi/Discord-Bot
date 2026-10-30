@@ -1,0 +1,25 @@
+name: Rollen-Diagnose
+
+# Manuell starten, wenn /login oder /mcname für jemanden nicht funktioniert.
+on:
+  workflow_dispatch:
+    inputs:
+      min_role_id:
+        description: "ID der Mod-Rolle (wie MIN_ROLE_ID im Worker)"
+        required: true
+        default: "1510377990113198163"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rollen prüfen
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          GUILD_ID: ${{ vars.GUILD_ID }}
+          MIN_ROLE: ${{ inputs.min_role_id }}
+        run: python3 scripts/diagnose_roles.py "$MIN_ROLE"
