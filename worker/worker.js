@@ -479,14 +479,28 @@ async function fetchModLives(env) {
   return extractLives(await fetchModJson(env, "/api/v1/lives"));
 }
 
-// Stats wie die Leben: GET /api/v1/stats; liefert { list: [{ name, uuid, stats }], status }
+// Stats wie die Leben: GET /api/v1/stats; liefert { list: [{ name, uuid, stats }], status, raw }
 async function fetchModStats(env) {
   try {
-    return { list: extractPlayerStats(await fetchModJson(env, "/api/v1/stats")), status: 200 };
+    const raw = await fetchModJson(env, "/api/v1/stats");
+    return { list: extractPlayerStats(raw), status: 200, raw };
   } catch (err) {
     if (err.status) return { list: [], status: err.status }; // z. B. 404 = gibt es nicht, 403 = Recht fehlt
     throw err;
   }
+}
+
+function previewJson(v, depth) {
+  if (depth > 6) return "…";
+  if (Array.isArray(v)) return v.slice(0, 2).map(x => previewJson(x, depth + 1)).concat(v.length > 2 ? [`… (${v.length} insgesamt)`] : []);
+  if (v && typeof v === "object") {
+    const o = {};
+    for (const [k, x] of Object.entries(v).slice(0, 40)) {
+      o[k] = /^(ip|.*_ip|address|token|.*token|email|password|secret)$/i.test(k) ? "[entfernt]" : previewJson(x, depth + 1);
+    }
+    return o;
+  }
+  return typeof v === "string" && v.length > 40 ? v.slice(0, 40) + "…" : v;
 }
 
 // Alle einfachen Werte eines Spieler-Eintrags außer Kennungen als Statistik
@@ -602,6 +616,9 @@ async function modLivesCheck(env) {
         playersWithStats: stats.list.length,
         fields: statKeys,
         example: (stats.list[0] || lives.find(l => Object.keys(l.stats || {}).length)) || null,
+        // Gekürzte Vorschau der Antwort, damit das Format erkennbar ist (Listen auf 2 Einträge,
+        // lange Texte gekürzt, IP/Token/E-Mail/Passwort entfernt)
+        preview: stats.raw === undefined ? null : previewJson(stats.raw, 0),
       },
     }));
   } catch (err) {
