@@ -38,6 +38,13 @@
 //                      fürs ganze Team); als "team:<nummer>:<verloren>" im Tier-Kanal
 // POST /links          { youtube, tiktok, discord, instagram, twitch, x } speichert die offiziellen
 //                      Kanäle von Radius 2; als "links:<base64url(JSON)>" im Tier-Kanal
+//
+// Event-Empfänger für den Logger der Mod (Typ "HTTP-API"):
+// POST /api/events     nimmt Events an (Titel, Beschreibung, Felder – auch im Discord-Embed-Format),
+//                      geprüft mit EVENT_SECRET; speichert sie als Nachricht im Kanal EVENT_CHANNEL_ID
+// GET  /events.json    die letzten Events für die Live-Seite (15 Sekunden zwischengespeichert)
+//   EVENT_CHANNEL_ID    eigener versteckter Kanal für Events (nicht #mc-namen, das bleibt schnell)
+//   EVENT_SECRET        dasselbe Secret wie im Logger der Mod (als Secret!); ohne Secret wird nichts angenommen
 
 const API = "https://discord.com/api/v10";
 const DEFAULT_GUILD_ID = "1502797926982746224";
@@ -75,6 +82,8 @@ export default {
     if (request.method === "POST" && path === "/player") return playerSave(request, env, ctx);
     if (request.method === "POST" && path === "/team") return teamSave(request, env, ctx);
     if (request.method === "POST" && path === "/links") return linksSave(request, env, ctx);
+    if (request.method === "POST" && path === "/api/events") return eventReceive(request, env, ctx);
+    if (request.method === "GET" && path === "/events.json") return eventsResponse(request, env, ctx);
     if (request.method !== "POST") return new Response("Discord-Minecraft-Worker läuft.");
 
     const body = await request.text();
@@ -801,6 +810,108 @@ function b64url(bytes) {
 function fromB64url(text) {
   const bin = atob(text.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((text.length + 3) % 4));
   return Uint8Array.from(bin, c => c.charCodeAt(0));
+}
+
+// --- Event-Empfänger (Logger der Mod) ---------------------------------------
+
+const EVENT_RE = /^(?:-# )?ev:([A-Za-z0-9_-]+)$/m;
+const EVENTS_SHOWN = 50;
+const EVENTS_CACHE_SECONDS = 15;
+
+// Secret prüfen: als Bearer-Token, in einem der üblichen Header oder als HMAC-SHA256-Signatur des Inhalts
+async function eventAuthorized(request, env, body) {
+  const secret = env.EVENT_SECRET;
+  if (!secret) return false;
+  const h = name => request.headers.get(name) || "";
+  const plain = [h("Authorization").replace(/^Bearer\s+/i, ""), h("X-Secret"), h("X-Api-Key"), h("X-Webhook-Secret"), h("X-Logger-Secret")];
+  if (plain.some(v => v && safeEqual(v, secret))) return true;
+  const signature = (h("X-Signature-256") || h("X-Hub-Signature-256") || h("X-Signature")).replace(/^sha256=/i, "").trim();
+  if (!signature) return false;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)));
+  const hex = Array.from(mac, b => b.toString(16).padStart(2, "0")).join("");
+  const base64 = btoa(String.fromCharCode(...mac));
+  return safeEqual(signature.toLowerCase(), hex) || safeEqual(signature, base64);
+}
+
+// Vergleich ohne frühen Abbruch (verrät nicht, wie viele Zeichen stimmen)
+function safeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+// Aus beliebigen Formaten Titel, Beschreibung, Felder, Server und Zeit herausholen
+function normalizeEvent(data) {
+  const embed = Array.isArray(data.embeds) && data.embeds[0] ? data.embeds[0] : data.embed || data;
+  const text = (v, max) => (v === undefined || v === null ? "" : String(v)).replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, " ").trim().slice(0, max);
+  const rawFields = Array.isArray(embed.fields) ? embed.fields
+    : data.fields && typeof data.fields === "object" ? Object.entries(data.fields).map(([name, value]) => ({ name, value }))
+    : [];
+  return {
+    title: text(embed.title || data.title || data.event || data.type || data.name || data.content, 120) || "Event",
+    description: text(embed.description || data.description || data.message || (embed.title ? data.content : ""), 400),
+    fields: rawFields.slice(0, 8).map(f => ({ name: text(f.name, 60), value: text(f.value, 120) })).filter(f => f.name || f.value),
+    server: text(data.server || data.serverId || data.server_id || data.source, 40),
+    color: Number.isInteger(embed.color) ? embed.color : null,
+    time: text(embed.timestamp || data.timestamp || data.time, 40) || new Date().toISOString(),
+  };
+}
+
+async function eventReceive(request, env, ctx) {
+  try {
+    const body = await request.text();
+    if (body.length > 20000) return json({ error: "Zu groß" }, 413);
+    if (!(await eventAuthorized(request, env, body))) return json({ error: "Secret fehlt oder ist falsch" }, 401);
+    if (!env.EVENT_CHANNEL_ID) return json({ error: "EVENT_CHANNEL_ID ist im Worker nicht gesetzt" }, 503);
+    let data;
+    try { data = JSON.parse(body); } catch { data = { title: "Event", description: body.slice(0, 400) }; }
+    const ev = normalizeEvent(data);
+    // Discord erlaubt 2000 Zeichen pro Nachricht: notfalls Felder und Beschreibung kürzen
+    const encode = () => b64url(new TextEncoder().encode(JSON.stringify(ev)));
+    let encoded = encode();
+    while (encoded.length > 1600 && ev.fields.length) { ev.fields.pop(); encoded = encode(); }
+    while (encoded.length > 1600 && ev.description) { ev.description = ev.description.slice(0, -40); encoded = encode(); }
+    const readable = `📡 **${ev.title.replace(/[*_`~|]/g, "")}**` + (ev.server ? ` · ${ev.server}` : "") +
+      (ev.description ? `\n${ev.description.slice(0, 300)}` : "");
+    await discord(env, `/channels/${env.EVENT_CHANNEL_ID}/messages`, "POST", {
+      content: (readable.slice(0, 1990 - encoded.length - 10) + `\n-# ev:${encoded}`).slice(0, 2000),
+      allowed_mentions: { parse: [] },
+    });
+    ctx.waitUntil(caches.default.delete(new Request(new URL("/events.json", request.url).toString())));
+    return json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return json({ error: "Speichern fehlgeschlagen: " + String(err.message).slice(0, 150) }, 502);
+  }
+}
+
+async function eventsResponse(request, env, ctx) {
+  const cache = caches.default;
+  const cacheKey = new Request(new URL("/events.json", request.url).toString());
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+  let events = [];
+  if (env.EVENT_CHANNEL_ID) {
+    try {
+      const botId = (await discord(env, "/users/@me", "GET")).id;
+      const msgs = await discord(env, `/channels/${env.EVENT_CHANNEL_ID}/messages?limit=${EVENTS_SHOWN}`, "GET");
+      for (const msg of msgs) {
+        const m = msg.author.id === botId && EVENT_RE.exec(msg.content);
+        if (!m) continue;
+        try { events.push({ id: msg.id, ...JSON.parse(new TextDecoder().decode(fromB64url(m[1]))) }); } catch {}
+      }
+    } catch (err) {
+      console.error(err);
+      return withCors(json({ error: "Events konnten nicht geladen werden" }, 502));
+    }
+  }
+  const response = withCors(new Response(JSON.stringify({ events, configured: !!env.EVENT_CHANNEL_ID }), {
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": `public, max-age=${EVENTS_CACHE_SECONDS}` },
+  }));
+  ctx.waitUntil(cache.put(cacheKey, response.clone()));
+  return response;
 }
 
 function withCors(response) {
