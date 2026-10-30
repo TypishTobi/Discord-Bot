@@ -32,10 +32,12 @@
 // POST /tierlist       { tier, order: [ids], moved } speichert ein Tier samt Reihenfolge
 //                      (nur Team ab MIN_ROLE_ID); { player, tier: null } entfernt aus der Tierlist.
 //                      Als Zeilen "tier:<discordId>:<tier>:<platz>" im Tier-Kanal, neueste gilt
-// POST /player         { player, team, kills, description, youtube } speichert Spielerdaten;
+// POST /player         { player, team, kills, description, youtube, tiktok } speichert Spielerdaten;
 //                      als "pdata:<discordId>:<base64url(JSON)>" im Tier-Kanal, neueste gilt
 // POST /team           { team, heartsLost } speichert die verlorenen Team-Herzen (gemeinsam
 //                      fürs ganze Team); als "team:<nummer>:<verloren>" im Tier-Kanal
+// POST /links          { youtube, tiktok, discord, instagram, twitch, x } speichert die offiziellen
+//                      Kanäle von Radius 2; als "links:<base64url(JSON)>" im Tier-Kanal
 
 const API = "https://discord.com/api/v10";
 const DEFAULT_GUILD_ID = "1502797926982746224";
@@ -53,6 +55,7 @@ const TIER_LINES_PER_MESSAGE = 40; // Discord erlaubt 2000 Zeichen pro Nachricht
 const LOGIN_RE = /^(?:-# )?login:([A-Z2-9]{8}):(\d+):(\d+)$/m;
 const PDATA_RE = /^(?:-# )?pdata:(\d+):([A-Za-z0-9_-]+)$/m;
 const TEAM_RE = /^(?:-# )?team:(\d+):(\d+)$/m;
+const LINKS_RE = /^(?:-# )?links:([A-Za-z0-9_-]+)$/m;
 const TEAM_COUNT = 12;
 const MAX_HEARTS = 4;
 const MAX_DESCRIPTION = 200;
@@ -71,6 +74,7 @@ export default {
     if (request.method === "POST" && path === "/tierlist") return tierSave(request, env, ctx);
     if (request.method === "POST" && path === "/player") return playerSave(request, env, ctx);
     if (request.method === "POST" && path === "/team") return teamSave(request, env, ctx);
+    if (request.method === "POST" && path === "/links") return linksSave(request, env, ctx);
     if (request.method !== "POST") return new Response("Discord-Minecraft-Worker läuft.");
 
     const body = await request.text();
@@ -380,7 +384,8 @@ async function buildMembers(env) {
           team: playerData.get(m.user.id)?.team ?? null,
           kills: playerData.get(m.user.id)?.kills ?? 0,
           description: playerData.get(m.user.id)?.description ?? "",
-          youtube: playerData.get(m.user.id)?.youtube ?? "", // gesetzt = wird als Creator angezeigt
+          youtube: playerData.get(m.user.id)?.youtube ?? "", // YouTube oder TikTok gesetzt = Creator
+          tiktok: playerData.get(m.user.id)?.tiktok ?? "",
         };
       });
     // Höchster Rang zuerst, Leute ohne Rang ganz unten, innerhalb eines Rangs alphabetisch
@@ -406,6 +411,7 @@ async function buildMembers(env) {
     teamCount: TEAM_COUNT,
     maxHearts: MAX_HEARTS,
     teams: parseTeams(tierContents),
+    links: parseLinks(tierContents),
     roles: result,
   };
 }
@@ -648,7 +654,8 @@ async function playerSave(request, env, ctx) {
     const data = cleanPlayerData(body);
     if (data.error) return data;
     const summary = `${data.team ? "Team " + data.team : "kein Team"} · ${data.kills} Kills` +
-      (data.youtube ? ` · YouTube ${data.youtube.replace("https://www.youtube.com/", "")}` : "");
+      (data.youtube ? ` · YouTube ${data.youtube.replace("https://www.youtube.com/", "")}` : "") +
+      (data.tiktok ? ` · TikTok ${data.tiktok.replace("https://www.tiktok.com/", "")}` : "");
     const encoded = b64url(new TextEncoder().encode(JSON.stringify(data)));
     return {
       content: `<@${player}> → ${summary} (von <@${session.uid}>)\n-# pdata:${player}:${encoded}`,
@@ -670,28 +677,80 @@ function cleanPlayerData(body) {
   if (kills === null) return { error: "Kills: eine Zahl von 0 bis 9999." };
   const description = String(body.description ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
   if (description.length > MAX_DESCRIPTION) return { error: `Beschreibung: höchstens ${MAX_DESCRIPTION} Zeichen.` };
-  const youtube = cleanYoutube(body.youtube);
-  if (youtube === null) {
-    return { error: "YouTube-Link ungültig. Erlaubt: youtube.com/@name, youtube.com/channel/… oder einfach @name." };
-  }
-  return { team, kills, description, youtube };
+  const youtube = cleanSocial("youtube", body.youtube);
+  if (youtube === null) return { error: "YouTube-Link ungültig. " + SOCIALS.youtube.hint };
+  const tiktok = cleanSocial("tiktok", body.tiktok);
+  if (tiktok === null) return { error: "TikTok-Link ungültig. " + SOCIALS.tiktok.hint };
+  return { team, kills, description, youtube, tiktok };
 }
 
-// Nur echte YouTube-Kanäle; liefert eine einheitliche Adresse, "" für leer oder null für ungültig
-function cleanYoutube(value) {
+// Erlaubte Kanäle: Host, gültige Pfade und die einheitliche Adresse, auf die normalisiert wird.
+// "@name" allein wird bei Plattformen mit @-Handles akzeptiert.
+const SOCIALS = {
+  youtube: { label: "YouTube", hosts: ["youtube.com"], base: "https://www.youtube.com",
+    path: /^\/(@[\w.-]{3,30}|channel\/UC[\w-]{22}|c\/[\w.-]{1,100}|user\/[\w.-]{1,100})$/, at: true,
+    hint: "Erlaubt: youtube.com/@name, youtube.com/channel/… oder @name." },
+  tiktok: { label: "TikTok", hosts: ["tiktok.com"], base: "https://www.tiktok.com",
+    path: /^\/@[\w.]{2,24}$/, at: true, hint: "Erlaubt: tiktok.com/@name oder @name." },
+  discord: { label: "Discord", hosts: ["discord.gg", "discord.com"], base: "https://discord.gg",
+    path: /^\/(?:invite\/)?([\w-]{2,32})$/, hint: "Erlaubt: discord.gg/einladung." },
+  instagram: { label: "Instagram", hosts: ["instagram.com"], base: "https://www.instagram.com",
+    path: /^\/[\w.]{1,30}$/, hint: "Erlaubt: instagram.com/name." },
+  twitch: { label: "Twitch", hosts: ["twitch.tv"], base: "https://www.twitch.tv",
+    path: /^\/\w{3,25}$/, hint: "Erlaubt: twitch.tv/name." },
+  x: { label: "X", hosts: ["x.com", "twitter.com"], base: "https://x.com",
+    path: /^\/\w{1,15}$/, hint: "Erlaubt: x.com/name." },
+};
+
+// Liefert die einheitliche Adresse, "" für leer oder null für ungültig
+function cleanSocial(platform, value) {
+  const spec = SOCIALS[platform];
   let text = String(value ?? "").trim();
   if (!text) return "";
-  if (/^@[\w.-]{3,30}$/.test(text)) text = "https://www.youtube.com/" + text;
+  if (spec.at && /^@[\w.-]{2,30}$/.test(text)) text = spec.base + "/" + text;
   let url;
   try {
     url = new URL(/^https?:\/\//i.test(text) ? text : "https://" + text);
   } catch {
     return null;
   }
-  if (url.hostname.replace(/^(www\.|m\.)/, "") !== "youtube.com") return null;
+  if (!spec.hosts.includes(url.hostname.replace(/^(www\.|m\.)/, ""))) return null;
   const path = url.pathname.replace(/\/$/, "");
-  if (!/^\/(@[\w.-]{3,30}|channel\/UC[\w-]{22}|c\/[\w.-]{1,100}|user\/[\w.-]{1,100})$/.test(path)) return null;
-  return "https://www.youtube.com" + path;
+  const m = spec.path.exec(path);
+  if (!m) return null;
+  if (platform === "discord") return spec.base + "/" + m[1]; // discord.com/invite/x -> discord.gg/x
+  return spec.base + path;
+}
+
+// Offizielle Kanäle von Radius 2 (Socials-Seite); das Team pflegt sie per POST /links
+const DEFAULT_LINKS = { discord: "https://discord.gg/ejKCz67QeP" };
+
+async function linksSave(request, env, ctx) {
+  return teamWrite(request, env, ctx, (body, player, session) => {
+    const links = {};
+    for (const platform of Object.keys(SOCIALS)) {
+      const value = cleanSocial(platform, body[platform]);
+      if (value === null) return { error: `${SOCIALS[platform].label}-Link ungültig. ${SOCIALS[platform].hint}` };
+      if (value) links[platform] = value;
+    }
+    const encoded = b64url(new TextEncoder().encode(JSON.stringify(links)));
+    const list = Object.keys(links).map(p => SOCIALS[p].label).join(", ") || "keine";
+    return {
+      content: `🔗 Radius-Links geändert: ${list} (von <@${session.uid}>)\n-# links:${encoded}`,
+      result: { links },
+    };
+  }, { requirePlayer: false });
+}
+
+function parseLinks(contents) {
+  for (const content of contents) {
+    const m = LINKS_RE.exec(content);
+    if (!m) continue;
+    try {
+      return JSON.parse(new TextDecoder().decode(fromB64url(m[1])));
+    } catch {}
+  }
+  return DEFAULT_LINKS;
 }
 
 // Team-Herzen: jedes Team hat MAX_HEARTS gemeinsame Herzen

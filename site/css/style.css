@@ -532,6 +532,56 @@ footer .btn{padding:9px 18px;font-size:15px}
 .creator-form select:focus,.creator-form input:focus{outline:2px solid var(--bolt);outline-offset:1px}
 .creator-form .btn{padding:10px 18px;font-size:14px}
 
+/* Spieler-Fenster und Kanäle */
+.pcard.clickable,.td-table tr.clickable{cursor:pointer}
+.pcard.clickable{transition:border-color .2s,transform .2s}
+.pcard.clickable:hover{border-color:rgba(98,220,255,.55);transform:translateY(-2px)}
+.td-table tr.clickable:hover td{background:rgba(98,220,255,.08)}
+.roster-card{font:inherit;color:inherit;text-align:left;cursor:pointer;width:100%;transition:border-color .2s,transform .2s}
+.roster-card:hover{border-color:rgba(98,220,255,.55);transform:translateY(-2px)}
+.tierlist:not(.editing) .tchip{cursor:pointer}
+.tierlist:not(.editing) .tchip:hover{border-color:rgba(98,220,255,.55)}
+button.chip{width:100%;font:inherit;text-align:left;cursor:pointer}
+.chip-icons{display:flex;gap:6px;flex:none}
+.chip-icons span{width:24px;height:24px;color:var(--ash)}
+.chip-icons svg{width:100%;height:100%}
+.chip:hover .chip-tt{color:#fff}
+.player-dialog{width:min(620px,calc(100% - 32px))}
+.pd-body{display:flex;gap:22px;align-items:flex-start;margin:0 0 18px}
+.pd-skin{flex:none;width:75px;height:150px;image-rendering:pixelated;filter:drop-shadow(0 10px 18px rgba(0,0,0,.5))}
+.pd-info{flex:1;min-width:0;padding-right:40px}
+.pd-info h2{font-size:32px;margin:0;overflow-wrap:anywhere}
+.pd-rank{margin:4px 0 0;font-weight:700;text-transform:uppercase;letter-spacing:.05em;font-size:14px;color:var(--ice)}
+.pd-info .mc{margin:2px 0 0;color:var(--soft)}
+.pd-desc{margin:12px 0 0;line-height:1.5}
+.pd-desc.empty{color:var(--ash);font-style:italic}
+.pd-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.player-dialog .td-close{position:absolute;top:18px;right:18px}
+.player-dialog .td-stats{grid-template-columns:repeat(4,1fr)}
+.social-btn{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;font-weight:700;font-size:14px;color:#fff;text-decoration:none;transition:transform .15s,filter .15s}
+.social-btn svg{width:18px;height:18px}
+.social-btn:hover{transform:translateY(-2px);filter:brightness(1.1)}
+.s-youtube{--brand:#ff2e2e}.s-tiktok{--brand:#111;--brand-2:#25f4ee}.s-discord{--brand:#5865f2}
+.s-instagram{--brand:#d6249f}.s-twitch{--brand:#9146ff}.s-x{--brand:#111}
+.social-btn{background:var(--brand)}
+.social-btn.s-tiktok{box-shadow:-2px -2px 0 var(--brand-2),2px 2px 0 #fe2c55}
+@media (max-width:560px){.pd-body{gap:14px}.pd-skin{width:56px;height:112px}.player-dialog .td-stats{grid-template-columns:1fr 1fr}.pd-info h2{font-size:26px}}
+
+/* Socials-Seite */
+.socials{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:16px;margin-top:30px}
+.social-card{display:flex;align-items:center;gap:16px;padding:20px;background:linear-gradient(160deg,var(--panel),var(--deep));border:1px solid var(--line);border-radius:16px;color:var(--text);text-decoration:none;position:relative;overflow:hidden;transition:transform .2s,border-color .2s}
+.social-card::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--brand)}
+.social-card:hover{transform:translateY(-3px);border-color:var(--brand)}
+.sc-icon{flex:none;width:52px;height:52px;display:grid;place-items:center;border-radius:14px;background:var(--brand);color:#fff;font:700 24px var(--f-display)}
+.sc-icon svg{width:28px;height:28px}
+.s-tiktok .sc-icon{box-shadow:-3px -3px 0 var(--brand-2),3px 3px 0 #fe2c55}
+.sc-text{flex:1;min-width:0;display:flex;flex-direction:column}
+.sc-text strong{font-family:var(--f-display);font-size:24px}
+.sc-text small{color:var(--soft);font-size:14px;overflow-wrap:anywhere}
+.sc-go{flex:none;font-size:14px;font-weight:700;color:var(--ice)}
+.socials-form{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;align-items:end}
+.socials-form .pfield input{width:100%}
+
 /* Team-Statistik */
 .team-dialog{width:min(560px,calc(100% - 32px));max-height:calc(100% - 48px);overflow:auto;padding:24px;color:var(--text);background:linear-gradient(160deg,var(--panel),var(--deep));border:1px solid rgba(98,220,255,.35);border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
 .team-dialog::backdrop{background:rgba(3,8,18,.72);backdrop-filter:blur(4px)}
