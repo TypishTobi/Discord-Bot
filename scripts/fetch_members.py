@@ -17,7 +17,6 @@ import urllib.request
 from datetime import datetime, timezone
 
 API = "https://discord.com/api/v10"
-CDN = "https://cdn.discordapp.com"
 
 
 def api_get(path, token):
@@ -84,15 +83,6 @@ def fetch_minecraft_names(channel_id, token):
         before = batch[-1]["id"]
 
 
-def avatar_url(guild_id, member):
-    user = member["user"]
-    if member.get("avatar"):  # Server-spezifischer Avatar
-        return f"{CDN}/guilds/{guild_id}/users/{user['id']}/avatars/{member['avatar']}.png?size=128"
-    if user.get("avatar"):
-        return f"{CDN}/avatars/{user['id']}/{user['avatar']}.png?size=128"
-    return f"{CDN}/embed/avatars/{(int(user['id']) >> 22) % 6}.png"
-
-
 def role_key(name):
     """Vergleichsschlüssel für Rollennamen: nur Buchstaben/Ziffern, klein ("🛡 ┃ Sr. Admin" -> "sradmin")."""
     return "".join(c for c in name.casefold() if c.isalnum())
@@ -132,19 +122,15 @@ def build_payload(guild, roles, members, role_ids, mc_names=None):
         for m in holders:
             display_name = m.get("nick") or m["user"].get("global_name") or m["user"]["username"]
             rank, name, rank_position, rank_color = split_rank(display_name, roles_by_key)
+            # Datensparsam: nur was die Website anzeigt (kein Benutzername, Avatar oder Beitrittsdatum)
             entries.append({
                 "id": m["user"]["id"],
-                "username": m["user"]["username"],
-                "displayName": display_name,
                 "rank": rank,
                 "name": name,
                 "rankPosition": rank_position,
                 "rankColor": rank_color,
                 "minecraft": mc_names.get(m["user"]["id"], {}).get("name"),
                 "minecraftUuid": mc_names.get(m["user"]["id"], {}).get("uuid"),
-                "avatar": avatar_url(guild["id"], m),
-                "roles": [r for r in role_ids if r in m["roles"]],
-                "joinedAt": m.get("joined_at"),
             })
         # Höchster Rang zuerst, Leute ohne Rang ganz unten, innerhalb eines Rangs alphabetisch
         entries.sort(key=lambda e: (-e["rankPosition"], e["rank"] is None,

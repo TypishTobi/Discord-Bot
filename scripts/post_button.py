@@ -18,9 +18,12 @@ MESSAGE = {
         "title": "🎮 Minecraft-Name eintragen",
         "description": (
             "Hast du die Regeln gelesen und akzeptiert? Dann trag hier deinen "
-            "**Minecraft-Namen (Java Edition)** ein. Er wird auf der Teilnehmerliste "
-            "auf unserer Website angezeigt.\n\n"
-            "Du kannst ihn jederzeit ändern, indem du erneut auf den Button klickst."
+            "**Minecraft-Namen (Java Edition)** ein.\n\n"
+            "**Mit dem Absenden bist du einverstanden**, dass dein Discord-Anzeigename, "
+            "dein Minecraft-Name und -Skin sowie Team, Tier, Kills und eine kurze "
+            "Beschreibung von dir auf unserer Website angezeigt werden. "
+            "Du kannst das jederzeit widerrufen: Melde dich beim Team, dann entfernen wir deine Daten.\n\n"
+            "Deinen Namen kannst du jederzeit ändern, indem du erneut auf den Button klickst."
         ),
         "color": 0x3498DB,  # blau
     }],

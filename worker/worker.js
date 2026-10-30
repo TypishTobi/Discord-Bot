@@ -168,8 +168,10 @@ async function handleSubmit(interaction, env) {
   const result = await assignName(env, interaction, userId, values.mc_name, null);
   if (result.error) return result.error;
   return `✅ Gespeichert! Dein Minecraft-Name ist **${result.name}**. ` +
-    "Auf der Website erscheint er beim nächsten Update (bis zu 15 Minuten). " +
-    "Zum Ändern einfach erneut auf den Button klicken.";
+    "Auf der Website erscheint er in spätestens einer Minute. " +
+    "Zum Ändern einfach erneut auf den Button klicken.\n" +
+    "-# Du hast zugestimmt, dass dein Name, Skin, Team, Tier, Kills und eine kurze Beschreibung " +
+    "auf der Website angezeigt werden. Widerruf jederzeit beim Team.";
 }
 
 async function handleCommand(interaction, env) {
@@ -359,10 +361,10 @@ async function buildMembers(env) {
         const displayName = m.nick || m.user.global_name || m.user.username;
         const rank = splitRank(displayName, rolesByKey);
         const mc = names.get(m.user.id);
+        // Datensparsam: nur was die Website anzeigt (kein Discord-Benutzername, kein Beitrittsdatum);
+        // die ID braucht die Bearbeitung durchs Team
         return {
           id: m.user.id,
-          username: m.user.username,
-          displayName,
           ...rank,
           minecraft: mc?.name ?? null,
           minecraftUuid: mc?.uuid ?? null,
@@ -370,8 +372,6 @@ async function buildMembers(env) {
           team: playerData.get(m.user.id)?.team ?? null,
           kills: playerData.get(m.user.id)?.kills ?? 0,
           description: playerData.get(m.user.id)?.description ?? "",
-          roles: roleIds.filter(id => m.roles.includes(id)),
-          joinedAt: m.joined_at ?? null,
         };
       });
     // Höchster Rang zuerst, Leute ohne Rang ganz unten, innerhalb eines Rangs alphabetisch
