@@ -51,6 +51,25 @@ def main():
         ok = admin or (min_pos is not None and top >= min_pos)
         print(f"  {'JA  ' if ok else 'NEIN'} {nick}: " + ", ".join(f"{r['name']} ({r['position']})" for r in mine[:4]))
 
+    # Login-Codes im Kanal (ohne den Code selbst auszugeben): wurde /login benutzt?
+    channel = os.environ.get("MC_CHANNEL_ID", "").strip()
+    if channel:
+        import re
+        import time
+        nicks = {m["user"]["id"]: (m.get("nick") or m["user"].get("global_name") or m["user"]["username"]) for m in members}
+        msgs = get(f"/channels/{channel}/messages?limit=100", token)
+        print("\nOffene Login-Codes im Kanal (eingelöste werden gelöscht):")
+        found = False
+        for msg in msgs if isinstance(msgs, list) else []:
+            m = re.search(r"login:[A-Z2-9]{8}:(\d+):(\d+)", msg.get("content", ""))
+            if m:
+                found = True
+                left = (int(m.group(2)) / 1000 - time.time()) / 60
+                state = f"noch {left:.0f} min gültig" if left > 0 else f"abgelaufen vor {-left:.0f} min"
+                print(f"  {nicks.get(m.group(1), 'unbekannt')}: {state} · erstellt {msg['timestamp'][:16].replace('T', ' ')} UTC")
+        if not found:
+            print("  keine")
+
     app = get("/applications/@me", token)
     print("\nBefehle und Einschränkungen in Servereinstellungen → Integrationen:")
     cmds = get(f"/applications/{app['id']}/guilds/{guild_id}/commands", token)

@@ -21,5 +21,6 @@ jobs:
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           GUILD_ID: ${{ vars.GUILD_ID }}
+          MC_CHANNEL_ID: ${{ vars.MC_CHANNEL_ID }}
           MIN_ROLE: ${{ inputs.min_role_id }}
         run: python3 scripts/diagnose_roles.py "$MIN_ROLE"
