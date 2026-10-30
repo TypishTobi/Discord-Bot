@@ -43,6 +43,7 @@
 // POST /api/events     nimmt Events an (Titel, Beschreibung, Felder – auch im Discord-Embed-Format),
 //                      geprüft mit EVENT_SECRET; speichert die letzten 50 in Cloudflare KV (EVENTS_KV)
 // GET  /events.json    die letzten Events für die Live-Seite (15 Sekunden zwischengespeichert)
+// POST /events/delete  { id } oder { all: true } löscht Events (nur Team, mit Sitzung)
 //   EVENTS_KV           KV-Namespace-Bindung (Settings -> Bindings) für die Events
 //   EVENT_CHANNEL_ID    Optional statt KV: eigener versteckter Discord-Kanal für Events
 //   EVENT_SECRET        dasselbe Secret wie im Logger der Mod (als Secret!; MAVE_SECRET geht auch);
@@ -86,6 +87,7 @@ export default {
     if (request.method === "POST" && path === "/links") return linksSave(request, env, ctx);
     if (request.method === "POST" && path === "/api/events") return eventReceive(request, env, ctx);
     if (request.method === "GET" && path === "/events.json") return eventsResponse(request, env, ctx);
+    if (request.method === "POST" && path === "/events/delete") return eventDelete(request, env, ctx);
     if (request.method !== "POST") return new Response("Discord-Minecraft-Worker läuft.");
 
     const body = await request.text();
@@ -913,6 +915,39 @@ async function eventReceive(request, env, ctx) {
   } catch (err) {
     console.error(err);
     return json({ error: "Speichern fehlgeschlagen: " + String(err.message).slice(0, 150) }, 502);
+  }
+}
+
+// { id } löscht ein Event, { all: true } alle (nur Team ab MIN_ROLE_ID)
+async function eventDelete(request, env, ctx) {
+  try {
+    const session = await sessionFrom(request, env);
+    if (!session) return withCors(json({ error: "Bitte neu anmelden." }, 401));
+    if (!(await isTeamUser(env, session.uid))) return withCors(json({ error: "Nur das Team darf Events löschen." }, 403));
+    const body = await request.json().catch(() => ({}));
+    const all = body.all === true, id = String(body.id ?? "");
+    if (!all && !/^[\w-]{1,40}$/.test(id)) return withCors(json({ error: "Ungültige Angaben." }, 400));
+
+    let removed = 0;
+    if (env.EVENTS_KV) {
+      const list = (await env.EVENTS_KV.get(EVENTS_KV_KEY, "json")) || [];
+      const rest = all ? [] : list.filter(e => e.id !== id);
+      removed = list.length - rest.length;
+      await env.EVENTS_KV.put(EVENTS_KV_KEY, JSON.stringify(rest));
+    } else if (env.EVENT_CHANNEL_ID) {
+      const botId = (await discord(env, "/users/@me", "GET")).id;
+      const msgs = await discord(env, `/channels/${env.EVENT_CHANNEL_ID}/messages?limit=${EVENTS_SHOWN}`, "GET");
+      for (const msg of msgs) {
+        if (msg.author.id !== botId || !EVENT_RE.test(msg.content) || (!all && msg.id !== id)) continue;
+        await discord(env, `/channels/${env.EVENT_CHANNEL_ID}/messages/${msg.id}`, "DELETE").catch(() => {});
+        removed++;
+      }
+    }
+    ctx.waitUntil(caches.default.delete(new Request(new URL("/events.json", request.url).toString())));
+    return withCors(json({ ok: true, removed }));
+  } catch (err) {
+    console.error(err);
+    return withCors(json({ error: "Löschen fehlgeschlagen: " + String(err.message).slice(0, 150) }, 502));
   }
 }
 

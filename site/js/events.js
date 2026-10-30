@@ -1,13 +1,16 @@
 // Radius 2 – Live-Seite: Events aus der Mod (z. B. "Spieler hat ein Leben verloren").
 // Die Mod schickt sie an den Worker (POST /api/events), hier werden die letzten angezeigt
-// und alle 20 Sekunden aktualisiert.
+// und alle 20 Sekunden aktualisiert. Das Team kann nach dem Login (/login, siehe live.js)
+// einzelne oder alle Events löschen.
 (function(){
   var WORKER="https://mc-namen.typischtobi66.workers.dev";
   var feed=document.getElementById("event-feed"),status=document.getElementById("event-status");
+  var tools=document.getElementById("event-tools"),msg=document.getElementById("team-msg");
   if(!feed)return;
-  var shown="";
+  var shown="",session=null,last={events:[]};
 
   function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
+  function say(text,bad){if(!msg)return;msg.textContent=text||"";msg.classList.toggle("bad",!!bad);}
   // Symbol nach Stichworten im Titel/Text
   function kind(ev){
     var t=(ev.title+" "+ev.description).toLowerCase();
@@ -25,11 +28,13 @@
     if(s<86400)return "vor "+Math.floor(s/3600)+" h";
     return d.toLocaleString("de-DE",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
   }
-  function render(data){
+  function render(data,force){
+    last=data;
     var events=data.events||[];
-    var key=events.map(function(e){return e.id;}).join();
+    var key=events.map(function(e){return e.id;}).join()+"|"+!!session;
     status.textContent=data.configured===false?"Der Empfänger ist noch nicht eingerichtet.":"Aktualisiert sich automatisch · "+new Date().toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})+" Uhr";
-    if(key===shown){[].forEach.call(feed.querySelectorAll("time"),function(t){t.textContent=when(t.dateTime);});return;}
+    renderTools(events.length);
+    if(key===shown&&!force){[].forEach.call(feed.querySelectorAll("time"),function(t){t.textContent=when(t.dateTime);});return;}
     shown=key;feed.textContent="";
     if(!events.length){feed.appendChild(el("p","note","Noch keine Events. Sobald auf dem Server etwas passiert, erscheint es hier."));return;}
     events.forEach(function(ev){
@@ -47,13 +52,41 @@
         ev.fields.forEach(function(f){var d=el("div");d.appendChild(el("dt",null,f.name));d.appendChild(el("dd",null,f.value));dl.appendChild(d);});
         body.appendChild(dl);
       }
-      item.appendChild(body);feed.appendChild(item);
+      item.appendChild(body);
+      if(session){var rm=el("button","team-rm ev-rm","×");rm.type="button";rm.dataset.delete=ev.id;rm.title="Event löschen";rm.setAttribute("aria-label","Event „"+ev.title+"“ löschen");item.appendChild(rm);}
+      feed.appendChild(item);
     });
   }
+  function renderTools(count){
+    if(!tools)return;
+    tools.textContent="";
+    if(!session||!count)return;
+    var all=el("button","btn ghost","Alle Events löschen");all.type="button";
+    all.onclick=function(){if(confirm("Wirklich alle "+count+" Events löschen? Das lässt sich nicht rückgängig machen."))remove({all:true});};
+    tools.appendChild(all);
+  }
+  function remove(what){
+    say("Lösche …");
+    fetch(WORKER+"/events/delete",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+session},body:JSON.stringify(what)})
+      .then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||r.status);return d;});})
+      .then(function(d){
+        var rest=what.all?[]:(last.events||[]).filter(function(e){return e.id!==what.id;});
+        render({events:rest,configured:last.configured},true);
+        say(d.removed===1?"Event gelöscht.":d.removed+" Events gelöscht.");
+      })
+      .catch(function(e){say(e.message||"Löschen fehlgeschlagen.",true);});
+  }
+  feed.addEventListener("click",function(e){
+    var b=e.target.closest("[data-delete]");if(b&&session)remove({id:b.dataset.delete});
+  });
+  // Login-Status kommt von live.js
+  document.addEventListener("radius-auth",function(e){
+    session=e.detail.session;render(last,true);
+  });
   function load(){
     fetch(WORKER+"/events.json",{cache:"no-store"})
       .then(function(r){if(!r.ok)throw new Error(r.status);return r.json();})
-      .then(render)
+      .then(function(d){render(d);})
       .catch(function(){status.textContent="Events konnten gerade nicht geladen werden. Neuer Versuch in 20 Sekunden.";});
   }
   load();

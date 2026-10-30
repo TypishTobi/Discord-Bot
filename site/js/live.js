@@ -591,6 +591,8 @@
 
   // ---- Discord-Login fürs Team ----
   function renderAuth(){
+    // Andere Skripte (z. B. events.js auf der Live-Seite) erfahren so, ob das Team angemeldet ist
+    document.dispatchEvent(new CustomEvent("radius-auth",{detail:{session:me?session:null,name:me?me.name:null}}));
     if(!authBox)return;
     authBox.textContent="";
     if(me){
@@ -633,5 +635,5 @@
   session=read(SESSION_KEY);
 
   renderAuth();
-  load().then(function(){if(!board&&!grid&&!teamsGrid&&!creatorGrid&&!socialsGrid)return;return linkCode?redeem(linkCode):checkSession();});
+  load().then(function(){if(!board&&!grid&&!teamsGrid&&!creatorGrid&&!socialsGrid&&!document.getElementById("event-feed"))return;return linkCode?redeem(linkCode):checkSession();});
 })();

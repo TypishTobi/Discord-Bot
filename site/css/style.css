@@ -602,6 +602,11 @@ button.chip{width:100%;font:inherit;text-align:left;cursor:pointer}
 .ev-fields div{display:flex;gap:6px;font-size:14px}
 .ev-fields dt{color:var(--ash)}
 .ev-fields dd{margin:0;color:var(--text);font-weight:600}
+.ev-rm{align-self:flex-start;margin-left:4px}
+.event-tools{margin:0 0 14px}
+.event-tools:empty{display:none}
+.event-tools .btn{padding:9px 16px;font-size:13px;border-color:rgba(255,107,107,.45)}
+.event-tools .btn:hover{border-color:var(--border-red);background:rgba(255,107,107,.12)}
 
 /* Team-Statistik */
 .team-dialog{width:min(560px,calc(100% - 32px));max-height:calc(100% - 48px);overflow:auto;padding:24px;color:var(--text);background:linear-gradient(160deg,var(--panel),var(--deep));border:1px solid rgba(98,220,255,.35);border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.6)}

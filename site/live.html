@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Live · Minecraft Radius 2</title>
 <meta name="description" content="Radius 2: 12 Teams, 48 Spieler, 4 Team-Herzen auf einer 4k-Map. Start am 20. November 2026.">
-<link rel="stylesheet" href="css/style.css?v=18">
+<link rel="stylesheet" href="css/style.css?v=19">
 </head>
 <body class="subpage">
 <nav class="nav" id="nav" aria-label="Hauptnavigation">
@@ -30,9 +30,16 @@
 <main class="wrap">
 
   <section id="live">
-    <h2>Live vom Server</h2>
-    <p class="lead">Was gerade auf Radius 2 passiert: verlorene Herzen, Kills und mehr, direkt aus dem Spiel.</p>
-    <p class="tier-msg" id="event-status" role="status" aria-live="polite">Events werden geladen …</p>
+    <div class="tier-head">
+      <div>
+        <h2>Live vom Server</h2>
+        <p class="lead">Was gerade auf Radius 2 passiert: verlorene Herzen, Kills und mehr, direkt aus dem Spiel.</p>
+      </div>
+      <div class="tier-auth" id="team-auth"></div>
+    </div>
+    <p class="tier-msg" id="team-msg" role="status" aria-live="polite"></p>
+    <p class="note" id="event-status">Events werden geladen …</p>
+    <div class="event-tools" id="event-tools"></div>
     <div class="events" id="event-feed"></div>
   </section>
 
@@ -46,8 +53,9 @@
   </div>
 </footer>
 
-<script src="js/data.js?v=18"></script>
-<script src="js/main.js?v=18"></script>
-<script src="js/events.js?v=1"></script>
+<script src="js/data.js?v=19"></script>
+<script src="js/main.js?v=19"></script>
+<script src="js/live.js?v=19"></script>
+<script src="js/events.js?v=2"></script>
 </body>
 </html>
