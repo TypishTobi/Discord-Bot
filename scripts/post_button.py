@@ -22,7 +22,7 @@ MESSAGE = {
             "auf unserer Website angezeigt.\n\n"
             "Du kannst ihn jederzeit ändern, indem du erneut auf den Button klickst."
         ),
-        "color": 0x9B59B6,
+        "color": 0x3498DB,  # blau
     }],
     "components": [{
         "type": 1,

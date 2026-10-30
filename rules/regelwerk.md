@@ -132,7 +132,7 @@ Diskussionen über Moderationsentscheidungen gehören nicht in öffentliche Chat
 
 Bei Fragen kannst du ein Support-Ticket erstellen.
 
-🔑 Du hast bis hierhin gelesen? Dann merk dir das Codewort: **{CODEWORD}**
+Codewort: {CODEWORD}
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
