@@ -506,6 +506,10 @@ footer .btn{padding:9px 18px;font-size:15px}
 .team-card.clickable{cursor:pointer;transition:border-color .2s,transform .2s}
 .team-card.clickable:hover{border-color:rgba(98,220,255,.55);transform:translateY(-2px)}
 .team-more{display:block;margin-top:12px;font-size:13px;font-weight:600;color:var(--ice)}
+.team-rm{flex:none;width:22px;height:22px;display:grid;place-items:center;font-size:16px;line-height:1;color:var(--soft);background:transparent;border:1px solid var(--line);border-radius:5px;cursor:pointer}
+.team-rm:hover{color:#fff;border-color:var(--border-red);background:rgba(255,107,107,.15)}
+.team-add{display:block;width:100%;margin-top:10px;font:600 14px var(--f-body);color:var(--text);background:var(--deep);border:1px dashed rgba(98,220,255,.45);border-radius:8px;padding:8px 10px;cursor:pointer}
+.team-add:focus{outline:2px solid var(--bolt);outline-offset:1px}
 .gen-tag{font-style:normal;font-family:var(--f-body);font-size:11px;font-weight:700;color:#08111f;background:var(--ice);border-radius:4px;padding:1px 6px;margin-left:8px;vertical-align:middle;text-transform:uppercase;letter-spacing:.04em}
 
 /* Team-Statistik */

@@ -311,13 +311,36 @@
           li.appendChild(el("span",null,name));
           if(s===0)li.appendChild(el("em",null,"General"));
           if(p&&p.tier){var tb=el("span","tier-badge mini",p.tier);tb.dataset.t=p.tier;li.appendChild(tb);}
+          if(p&&editing()){var rm=el("button","team-rm","×");rm.type="button";rm.dataset.remove=p.id;rm.title=(p.name||p.displayName)+" aus Team "+n+" nehmen";rm.setAttribute("aria-label",rm.title);li.appendChild(rm);}
           ul.appendChild(li);
         }else ul.appendChild(el("li","empty",s===0?"General":"Platz "+(s+1)));
       }
       card.appendChild(ul);
+      // Team-Login: Spieler direkt hier zuordnen (höchstens 4 pro Team)
+      if(editing()&&live.length<4){
+        var add=el("select","team-add");add.dataset.team=n;add.setAttribute("aria-label","Spieler zu Team "+n+" hinzufügen");
+        var first=el("option",null,"+ Spieler hinzufügen");first.value="";add.appendChild(first);
+        var free=players.filter(function(p){return !p.team;}).sort(bestFirst),taken=players.filter(function(p){return p.team&&p.team!==n;}).sort(byName);
+        [["Ohne Team",free],["Aus anderem Team holen",taken]].forEach(function(g){
+          if(!g[1].length)return;var og=el("optgroup");og.label=g[0];
+          g[1].forEach(function(p){var o=el("option",null,(p.name||p.displayName)+(p.tier?" ("+p.tier+")":"")+(p.team?" · Team "+p.team:""));o.value=p.id;og.appendChild(o);});
+          add.appendChild(og);
+        });
+        card.appendChild(add);
+      }
       card.appendChild(el("span","team-more","Statistik ansehen →"));
       teamsGrid.appendChild(card);
     }
+  }
+
+  // Team eines Spielers ändern (Kills und Beschreibung bleiben erhalten)
+  function setTeam(id,team){
+    var p=players.filter(function(x){return x.id===id;})[0];if(!p||p.team===team)return;
+    if(team&&teamMembers(team).length>=4){say("Team "+team+" ist schon voll (4 Spieler).",true);renderTeams();return;}
+    var before=p.team;p.team=team;rerender();say("Speichere …");
+    post("/player",{player:p.id,team:team,kills:p.kills||0,description:p.description||""})
+      .then(function(){say((p.name||p.displayName)+(team?" ist jetzt in Team "+team+".":" hat jetzt kein Team mehr."));})
+      .catch(function(e){p.team=before;rerender();say(e.message||"Speichern fehlgeschlagen.",true);if(e.status===401||e.status===403)logout(true);});
   }
 
   // ---- Team-Statistik (Fenster beim Klick auf ein Team) ----
@@ -392,7 +415,14 @@
       var card=e.target.closest(".team-card");
       if(card&&e.target===card&&(e.key==="Enter"||e.key===" ")){e.preventDefault();openTeamStats(Number(card.dataset.team));}
     });
+    teamsGrid.addEventListener("change",function(e){
+      var s=e.target.closest(".team-add");if(!s||!s.value||!editing())return;
+      setTeam(s.value,Number(s.dataset.team));
+    });
     teamsGrid.addEventListener("click",function(e){
+      if(e.target.closest(".team-add"))return; // Auswahlliste öffnet keine Statistik
+      var rm=e.target.closest("[data-remove]");
+      if(rm&&editing()){setTeam(rm.dataset.remove,null);return;}
       var b=e.target.closest(".heart-btn[data-team]");
       if(!b||!editing()){var card=e.target.closest(".team-card");if(card&&!b)openTeamStats(Number(card.dataset.team));return;}
       var n=Number(b.dataset.team),lost=maxHearts-Number(b.dataset.left),t=teams.filter(function(x){return x.team===n;})[0];
