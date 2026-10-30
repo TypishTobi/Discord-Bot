@@ -828,9 +828,11 @@ const EVENTS_CACHE_SECONDS = 3; // kurz, damit neue Events schnell auf der Live-
 const MOD_STATE_KEY = "modstate"; // letzte bekannte Leben pro Spieler + bereits verarbeitete Events
 
 // Mod-Events automatisch auf die Website übertragen (Format des Mave-Loggers, Felder als Name = Wert):
-//   "Leben manuell geändert": Spieler, Neue Leben = N  -> jedes verlorene Leben kostet sein Team ein Herz,
-//                             ein zurückgegebenes Leben gibt es zurück. "Initialisierung" zählt nicht.
-//   Titel mit "getötet"/"kill" und Gegner (z. B. "Dummy getötet") -> Gegner bekommt +1 Kill.
+//   "Herzen = a → b" (z. B. "Leben verloren", "Dummy getötet") -> Team des Spielers ändert sich um b − a Herzen
+//   "Leben manuell geändert": Spieler, Neue Leben = N -> Differenz zum letzten bekannten Stand;
+//                             "Initialisierung" zählt nicht, Änderungen durch einen Tod ("… getötet")
+//                             auch nicht (die zählt schon das Tod-Event mit "Herzen")
+//   Gegner + Herz verloren oder Titel mit "getötet"/"kill" -> Gegner bekommt +1 Kill
 // Spieler werden über ihren Minecraft-Namen gefunden. Liefert eine Liste der Änderungen.
 async function applyModEvent(env, ev) {
   const fields = {};
@@ -845,14 +847,22 @@ async function applyModEvent(env, ev) {
   state.seen = [key, ...state.seen].slice(0, 300);
 
   let heartDelta = 0;
+  const name = spieler.toLowerCase();
+  const herzen = /(\d+)\s*(?:→|->|=>)\s*(\d+)/.exec(fields["herzen"] || "");
   const newLives = parseInt(fields["neue leben"], 10);
-  if (Number.isInteger(newLives)) {
-    const name = spieler.toLowerCase(), prev = state.lives[name];
+  if (herzen) {
+    // Vorher/Nachher steht direkt im Event
+    heartDelta = Number(herzen[2]) - Number(herzen[1]);
+    state.lives[name] = Number(herzen[2]);
+  } else if (Number.isInteger(newLives)) {
+    const prev = state.lives[name];
     state.lives[name] = newLives;
-    const init = /initialisierung/i.test(fields["geändert von"] || "");
-    if (prev !== undefined && !init) heartDelta = newLives - prev;
+    const changedBy = fields["geändert von"] || "";
+    const skip = /initialisierung/i.test(changedBy) || /getötet|getoetet|slain|killed/i.test(changedBy);
+    if (prev !== undefined && !skip) heartDelta = newLives - prev;
   }
-  const killer = fields["gegner"] && /getötet|getoetet|kill/i.test(ev.title) ? fields["gegner"] : null;
+  const gegner = fields["gegner"];
+  const killer = gegner && gegner.toLowerCase() !== name && (heartDelta < 0 || /getötet|getoetet|kill/i.test(ev.title)) ? gegner : null;
   await env.EVENTS_KV.put(MOD_STATE_KEY, JSON.stringify(state));
   if (!heartDelta && !killer) return [];
 
