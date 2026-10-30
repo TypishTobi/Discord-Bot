@@ -10,14 +10,13 @@ import urllib.error
 import urllib.request
 
 API = "https://discord.com/api/v10"
-MODERATE_MEMBERS = 1 << 40
 
 COMMANDS = [{
     "name": "mcname",
     "description": "Minecraft-Namen von Mitgliedern verwalten (Team)",
-    # Nur für Mitglieder mit "Mitglieder im Timeout" sichtbar; anpassbar unter
-    # Servereinstellungen -> Integrationen. Der Worker prüft zusätzlich MIN_ROLE_ID.
-    "default_member_permissions": str(MODERATE_MEMBERS),
+    # Für alle sichtbar (None): wer es nutzen darf, prüft allein der Worker (MIN_ROLE_ID und
+    # höher). Discord-Berechtigungen wie "Mitglieder im Timeout" spielen so keine Rolle.
+    "default_member_permissions": None,
     "contexts": [0],
     "options": [
         {
@@ -42,7 +41,7 @@ COMMANDS = [{
 }, {
     "name": "login",
     "description": "Einmal-Code für den Team-Login auf der Website (Tierlist)",
-    "default_member_permissions": str(MODERATE_MEMBERS),
+    "default_member_permissions": None,
     "contexts": [0],
 }]
 
