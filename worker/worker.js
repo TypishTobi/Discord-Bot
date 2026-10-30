@@ -17,8 +17,15 @@
 //                       im öffentlichen Repo steht; leer = keine Abfrage)
 //   MIN_ROLE_ID         Niedrigste Rolle, die /mcname benutzen darf (z. B. Mod);
 //                       alle Rollen darüber dürfen es auch
+//   GUILD_ID, ROLE_IDS  Optional; Standard siehe unten (Server/Rolle der Website)
+//
+// GET /members.json liefert die Mitgliederliste live für die Website
+// (gleiches Format wie scripts/fetch_members.py, 60 Sekunden zwischengespeichert).
 
 const API = "https://discord.com/api/v10";
+const DEFAULT_GUILD_ID = "1502797926982746224";
+const DEFAULT_ROLE_IDS = "1510380603479036054";
+const MEMBERS_CACHE_SECONDS = 60;
 const NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
 const ENTRY_RE = /^(?:-# )?(?:mc:(\d+):(\w{3,16}):([0-9a-f]{32})|mcdel:(\d+))$/m;
 const ADMINISTRATOR = 1n << 3n;
@@ -26,6 +33,9 @@ const EPHEMERAL = 64;
 
 export default {
   async fetch(request, env, ctx) {
+    if (request.method === "GET" && new URL(request.url).pathname === "/members.json") {
+      return membersResponse(request, env, ctx);
+    }
     if (request.method !== "POST") return new Response("Discord-Minecraft-Worker läuft.");
 
     const body = await request.text();
@@ -203,6 +213,133 @@ async function loadNames(env, botId) {
   }
   for (const [id, entry] of latest) if (!entry) latest.delete(id);
   return latest;
+}
+
+// --- Live-Mitgliederliste für die Website ---------------------------------
+
+async function membersResponse(request, env, ctx) {
+  const cache = caches.default;
+  const cacheKey = new Request(new URL("/members.json", request.url).toString());
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  let response;
+  try {
+    const payload = await buildMembers(env);
+    response = new Response(JSON.stringify(payload), {
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": `public, max-age=${MEMBERS_CACHE_SECONDS}`,
+      },
+    });
+    ctx.waitUntil(cache.put(cacheKey, response.clone()));
+  } catch (err) {
+    console.error(err);
+    response = new Response(JSON.stringify({ error: String(err.message).slice(0, 200) }), {
+      status: 502,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }
+  return response;
+}
+
+async function buildMembers(env) {
+  const guildId = env.GUILD_ID || DEFAULT_GUILD_ID;
+  const roleIds = (env.ROLE_IDS || DEFAULT_ROLE_IDS).split(",").map(s => s.trim()).filter(Boolean);
+
+  const [guild, roles, members] = await Promise.all([
+    discord(env, `/guilds/${guildId}`, "GET"),
+    discord(env, `/guilds/${guildId}/roles`, "GET"),
+    fetchAllMembers(env, guildId),
+  ]);
+  const botId = (await discord(env, "/users/@me", "GET")).id;
+  const names = env.MC_CHANNEL_ID ? await loadNames(env, botId) : new Map();
+
+  const rolesById = new Map(roles.map(r => [r.id, r]));
+  const rolesByKey = new Map();
+  for (const r of [...roles].sort((a, b) => a.position - b.position)) rolesByKey.set(roleKey(r.name), r);
+
+  const result = [];
+  for (const roleId of roleIds) {
+    const role = rolesById.get(roleId);
+    if (!role) continue;
+    const entries = members
+      .filter(m => m.roles.includes(roleId) && !m.user.bot)
+      .map(m => {
+        const displayName = m.nick || m.user.global_name || m.user.username;
+        const rank = splitRank(displayName, rolesByKey);
+        const mc = names.get(m.user.id);
+        return {
+          id: m.user.id,
+          username: m.user.username,
+          displayName,
+          ...rank,
+          minecraft: mc?.name ?? null,
+          minecraftUuid: mc?.uuid ?? null,
+          roles: roleIds.filter(id => m.roles.includes(id)),
+          joinedAt: m.joined_at ?? null,
+        };
+      });
+    // Höchster Rang zuerst, Leute ohne Rang ganz unten, innerhalb eines Rangs alphabetisch
+    entries.sort((a, b) =>
+      b.rankPosition - a.rankPosition ||
+      (a.rank === null) - (b.rank === null) ||
+      (a.rank ?? "").localeCompare(b.rank ?? "", "de") ||
+      a.name.localeCompare(b.name, "de"));
+    result.push({
+      id: roleId,
+      name: role.name,
+      color: role.color ? hexColor(role.color) : null,
+      position: role.position,
+      members: entries,
+    });
+  }
+  result.sort((a, b) => b.position - a.position);
+  for (const r of result) delete r.position;
+  return { guild: guild.name, updatedAt: new Date().toISOString(), roles: result };
+}
+
+async function fetchAllMembers(env, guildId) {
+  const all = [];
+  let after = "0";
+  while (true) {
+    const batch = await discord(env, `/guilds/${guildId}/members?limit=1000&after=${after}`, "GET");
+    all.push(...batch);
+    if (batch.length < 1000) return all;
+    after = batch[batch.length - 1].user.id;
+  }
+}
+
+// "🛡 ┃ Sr. Admin" -> "sradmin"
+function roleKey(name) {
+  return name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+// "Admin | Mrtx" -> Rang "Admin" + Name "Mrtx"; Rang wird einer Discord-Rolle zugeordnet
+function splitRank(displayName, rolesByKey) {
+  const bar = displayName.indexOf("|");
+  if (bar === -1) return { rank: null, name: displayName.trim(), rankPosition: -1, rankColor: null };
+  const rank = displayName.slice(0, bar).trim();
+  const name = displayName.slice(bar + 1).trim();
+  const key = roleKey(rank);
+  let role = rolesByKey.get(key);
+  if (!role && key.length >= 3) {
+    // Abkürzungen wie "Mod" -> "Moderator", "Dev" -> "Developer"; höchste passende Rolle
+    for (const [k, r] of rolesByKey) {
+      if (k.startsWith(key) && (!role || r.position > role.position)) role = r;
+    }
+  }
+  return {
+    rank,
+    name,
+    rankPosition: role ? role.position : -1,
+    rankColor: role?.color ? hexColor(role.color) : null,
+  };
+}
+
+function hexColor(color) {
+  return "#" + color.toString(16).padStart(6, "0");
 }
 
 // Team = Administrator oder mindestens eine Rolle auf Höhe von MIN_ROLE_ID oder darüber

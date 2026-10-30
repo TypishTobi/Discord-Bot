@@ -59,11 +59,15 @@
 
   <script>
     const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-    // Minecraft-Kopf über die UUID; ohne eingetragenen Namen der Standard-Steve-Kopf
-    const head = m => `https://mc-heads.net/avatar/${encodeURIComponent(m.minecraftUuid || "MHF_Steve")}/88`;
+    // Minecraft-Kopf (mit Hut-Ebene) über die UUID; ohne eingetragenen Namen der Standard-Steve-Kopf
+    const head = m => `https://minotar.net/helm/${encodeURIComponent(m.minecraftUuid || "MHF_Steve")}/88.png`;
 
-    fetch("members.json", { cache: "no-store" })
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    // Live vom Cloudflare Worker; falls der nicht erreichbar ist, die von GitHub erzeugte Kopie
+    const LIVE_URL = "https://mc-namen.typischtobi66.workers.dev/members.json";
+    const load = url => fetch(url, { cache: "no-store" }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+
+    load(LIVE_URL)
+      .catch(() => load("members.json"))
       .then(data => {
         document.getElementById("title").textContent = data.guild;
         const total = new Set(data.roles.flatMap(r => r.members.map(m => m.id))).size;
