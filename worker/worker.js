@@ -9,6 +9,8 @@
 //   DISCORD_PUBLIC_KEY  Public Key der App (Developer Portal -> General Information)
 //   DISCORD_TOKEN       Bot-Token (als Secret!)
 //   MC_CHANNEL_ID       ID des versteckten Kanals für die Namen
+//   CODEWORD            Codewort aus dem Regelwerk (als Secret, damit es nicht
+//                       im öffentlichen Repo steht; leer = keine Abfrage)
 
 const API = "https://discord.com/api/v10";
 const NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
@@ -33,24 +35,33 @@ export default {
 
     // Button geklickt -> Eingabefenster öffnen
     if (interaction.type === 3 && interaction.data.custom_id === "mc_register") {
+      const fields = [{
+        type: 4,
+        custom_id: "mc_name",
+        label: "Dein Minecraft-Name (Java Edition)",
+        style: 1,
+        min_length: 3,
+        max_length: 16,
+        required: true,
+        placeholder: "z. B. Notch",
+      }];
+      if (env.CODEWORD) {
+        fields.push({
+          type: 4,
+          custom_id: "codeword",
+          label: "Codewort aus dem Regelwerk",
+          style: 1,
+          max_length: 100,
+          required: true,
+          placeholder: "Steht irgendwo in den Regeln",
+        });
+      }
       return json({
         type: 9,
         data: {
           custom_id: "mc_modal",
-          title: "Minecraft-Name",
-          components: [{
-            type: 1,
-            components: [{
-              type: 4,
-              custom_id: "mc_name",
-              label: "Dein Minecraft-Name (Java Edition)",
-              style: 1,
-              min_length: 3,
-              max_length: 16,
-              required: true,
-              placeholder: "z. B. Notch",
-            }],
-          }],
+          title: "Regeln akzeptieren",
+          components: fields.map(field => ({ type: 1, components: [field] })),
         },
       });
     }
@@ -68,11 +79,16 @@ export default {
 
 async function handleSubmit(interaction, env) {
   const userId = (interaction.member?.user ?? interaction.user).id;
-  const input = interaction.data.components[0].components[0].value.trim();
+  const values = Object.fromEntries(
+    interaction.data.components.flatMap(row => row.components).map(c => [c.custom_id, c.value.trim()])
+  );
+  const input = values.mc_name;
 
   let reply;
   try {
-    if (!NAME_RE.test(input)) {
+    if (env.CODEWORD && normalize(values.codeword) !== normalize(env.CODEWORD)) {
+      reply = "❌ Das Codewort ist falsch. Lies dir das Regelwerk noch einmal genau durch.";
+    } else if (!NAME_RE.test(input)) {
       reply = "❌ Ungültiger Name. Erlaubt sind 3–16 Zeichen: Buchstaben, Zahlen und `_`.";
     } else {
       const profile = await lookupProfile(input);
@@ -148,6 +164,11 @@ async function verifySignature(publicKey, signature, timestamp, body) {
   } catch {
     return false;
   }
+}
+
+// Groß-/Kleinschreibung, Leerzeichen und Anführungszeichen beim Codewort ignorieren
+function normalize(text) {
+  return String(text ?? "").toLowerCase().replace(/[\s"'„“”‚‘’»«]/g, "");
 }
 
 function hexToBytes(hex) {
