@@ -4,7 +4,7 @@
 // Drag & Drop oder Antippen einstufen und Team, Kills, Herzen und Beschreibung pflegen.
 (function(){
   var WORKER="https://mc-namen.typischtobi66.workers.dev";
-  var DEFAULT_TIERS=["S+","S","A+","A","B+","B","C+","C"];
+  var DEFAULT_TIERS=["S+","S","A+","A","B+","B","C+","C","D"];
   var SESSION_KEY="radius2-session",MAX_DESCRIPTION=200;
   var board=document.getElementById("tier-board"),grid=document.getElementById("player-grid"),teamsGrid=document.getElementById("teams-grid");
   var authBox=document.getElementById("team-auth"),msg=document.getElementById("team-msg");

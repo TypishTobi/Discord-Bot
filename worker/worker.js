@@ -43,11 +43,11 @@ const DEFAULT_ROLE_IDS = "1510380603479036054";
 const DEFAULT_SITE_URL = "https://typishtobi.github.io/Discord-Bot/";
 const MEMBERS_CACHE_SECONDS = 60;
 const SESSION_HOURS = 12;
-const TIERS = ["S+", "S", "A+", "A", "B+", "B", "C+", "C"];
+const TIERS = ["S+", "S", "A+", "A", "B+", "B", "C+", "C", "D"];
 const NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
 const ENTRY_RE = /^(?:-# )?(?:mc:(\d+):(\w{3,16}):([0-9a-f]{32})|mcdel:(\d+))$/m;
 // tier:<id>:<tier>[:<platz>] – mehrere Zeilen pro Nachricht möglich (ganze Reihenfolge eines Tiers)
-const TIER_RE = /^(?:-# )?tier:(\d+):([SABC]\+?|-)(?::(\d+))?$/gm;
+const TIER_RE = /^(?:-# )?tier:(\d+):([SABCD]\+?|-)(?::(\d+))?$/gm;
 const TIER_LINES_PER_MESSAGE = 40; // Discord erlaubt 2000 Zeichen pro Nachricht
 const LOGIN_RE = /^(?:-# )?login:([A-Z2-9]{8}):(\d+):(\d+)$/m;
 const PDATA_RE = /^(?:-# )?pdata:(\d+):([A-Za-z0-9_-]+)$/m;

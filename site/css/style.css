@@ -477,6 +477,7 @@ footer .btn{padding:9px 18px;font-size:15px}
 [data-t="A+"]{--t:#ffb54d}[data-t="A"]{--t:#ffd65c}
 [data-t="B+"]{--t:#d4ec6e}[data-t="B"]{--t:#8ee08a}
 [data-t="C+"]{--t:#6fd3f2}[data-t="C"]{--t:#8fa7ff}
+[data-t="D"]{--t:#c49cff}
 .tier-row.pool .tier-label{font-size:15px;color:var(--soft);background:var(--panel);font-family:var(--f-body);text-transform:uppercase;letter-spacing:.05em}
 .tier-zone{display:flex;flex-wrap:wrap;align-content:center;gap:8px;padding:10px 12px;min-width:0}
 .tier-empty{font-size:14px;color:var(--ash)}
