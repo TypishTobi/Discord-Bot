@@ -204,11 +204,11 @@
     }[sortBy];
     return list.slice().sort(cmp);
   }
-  function stat(label,value){var d=el("div"),dt=el("dt",null,label),dd=el("dd");if(typeof value==="string")dd.textContent=value;else dd.appendChild(value);d.appendChild(dt);d.appendChild(dd);return d;}
+  // Kompakte Karte: nur Kopf, Name und Tier; alles andere zeigt das Spieler-Fenster beim Klick
   function playerCard(p){
-    var card=el("article","pcard clickable");card.dataset.id=p.id;card.tabIndex=0;card.setAttribute("aria-label",(p.name||p.displayName)+": Details anzeigen");
+    var card=el("article","pcard compact clickable");card.dataset.id=p.id;card.tabIndex=0;card.setAttribute("aria-label",(p.name||p.displayName)+": Details anzeigen");
     var top=el("div","pcard-top"),who=el("div");
-    top.appendChild(headImg(p,56));
+    top.appendChild(headImg(p,48));
     var h3=el("h3",null,p.name||p.displayName);
     if(isGeneral(p))h3.appendChild(el("em","gen-tag","General"));
     who.appendChild(h3);
@@ -216,19 +216,6 @@
     top.appendChild(who);
     var badge=el("span","tier-badge",p.tier||"–");if(p.tier)badge.dataset.t=p.tier;badge.title=p.tier?"Tier "+p.tier:"Noch nicht eingestuft";
     top.appendChild(badge);card.appendChild(top);
-
-    // Herzen gehören dem Team: die Karte zeigt die gemeinsamen Herzen seines Teams
-    var stats=el("dl","pstats"),hearts;
-    if(p.team){
-      var lost=teamLost(p.team),h="";hearts=el("span","hearts");
-      for(var i=0;i<maxHearts;i++)h+=heartSVG(i>=maxHearts-lost);hearts.innerHTML=h;
-      hearts.setAttribute("aria-label",(maxHearts-lost)+" von "+maxHearts+" Team-Herzen übrig");
-    }else hearts="–";
-    stats.appendChild(stat("Team",p.team?"Team "+p.team:"–"));
-    stats.appendChild(stat("Kills",String(p.kills||0)));
-    stats.appendChild(stat("Team-Herzen",hearts));
-    card.appendChild(stats);
-    card.appendChild(el("p","pdesc"+(p.description?"":" empty"),p.description||"Noch keine Beschreibung."));
     if(editing()){var b=el("button","pedit","Bearbeiten");b.type="button";b.dataset.edit=p.id;card.appendChild(b);}
     return card;
   }

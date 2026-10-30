@@ -534,6 +534,11 @@ footer .btn{padding:9px 18px;font-size:15px}
 
 /* Spieler-Fenster und Kanäle */
 .pcard.clickable,.td-table tr.clickable{cursor:pointer}
+.players:has(.pcard.compact){grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr));gap:12px}
+.pcard.compact{gap:8px;padding:12px 14px}
+.pcard.compact::before{display:none}
+.pcard.compact h3{font-size:18px}
+.pcard.compact .tier-badge{font-size:17px;min-width:40px;padding:4px 6px}
 .pcard.clickable{transition:border-color .2s,transform .2s}
 .pcard.clickable:hover{border-color:rgba(98,220,255,.55);transform:translateY(-2px)}
 .td-table tr.clickable:hover td{background:rgba(98,220,255,.08)}
