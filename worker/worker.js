@@ -44,7 +44,8 @@
 //                      geprüft mit EVENT_SECRET; speichert sie als Nachricht im Kanal EVENT_CHANNEL_ID
 // GET  /events.json    die letzten Events für die Live-Seite (15 Sekunden zwischengespeichert)
 //   EVENT_CHANNEL_ID    eigener versteckter Kanal für Events (nicht #mc-namen, das bleibt schnell)
-//   EVENT_SECRET        dasselbe Secret wie im Logger der Mod (als Secret!); ohne Secret wird nichts angenommen
+//   EVENT_SECRET        dasselbe Secret wie im Logger der Mod (als Secret!; MAVE_SECRET geht auch);
+//                       ohne Secret wird nichts angenommen. Prüft X-Mave-Timestamp + X-Mave-Signature
 
 const API = "https://discord.com/api/v10";
 const DEFAULT_GUILD_ID = "1502797926982746224";
@@ -818,19 +819,34 @@ const EVENT_RE = /^(?:-# )?ev:([A-Za-z0-9_-]+)$/m;
 const EVENTS_SHOWN = 50;
 const EVENTS_CACHE_SECONDS = 15;
 
-// Secret prüfen: als Bearer-Token, in einem der üblichen Header oder als HMAC-SHA256-Signatur des Inhalts
+async function hmacHex(secret, text) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(text)));
+  return { hex: Array.from(mac, b => b.toString(16).padStart(2, "0")).join(""), base64: btoa(String.fromCharCode(...mac)) };
+}
+
+// Secret prüfen. Vorrang hat das Verfahren der Mod (Mave-Logger):
+//   X-Mave-Timestamp: Unix-Sekunden, höchstens 5 Minuten alt (gegen wiederholte alte Anfragen)
+//   X-Mave-Signature: "sha256=" + HMAC-SHA256(secret, timestamp + "." + body) als Hex
+// Daneben: Bearer-Token, übliche Secret-Header oder HMAC-Signatur nur über den Inhalt.
 async function eventAuthorized(request, env, body) {
-  const secret = env.EVENT_SECRET;
+  const secret = env.EVENT_SECRET || env.MAVE_SECRET;
   if (!secret) return false;
   const h = name => request.headers.get(name) || "";
+
+  const maveSig = h("X-Mave-Signature").trim();
+  if (maveSig) {
+    const ts = h("X-Mave-Timestamp").trim();
+    if (!/^\d{9,11}$/.test(ts) || Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
+    const { hex } = await hmacHex(secret, ts + "." + body);
+    return safeEqual(maveSig.toLowerCase(), "sha256=" + hex);
+  }
+
   const plain = [h("Authorization").replace(/^Bearer\s+/i, ""), h("X-Secret"), h("X-Api-Key"), h("X-Webhook-Secret"), h("X-Logger-Secret")];
   if (plain.some(v => v && safeEqual(v, secret))) return true;
   const signature = (h("X-Signature-256") || h("X-Hub-Signature-256") || h("X-Signature")).replace(/^sha256=/i, "").trim();
   if (!signature) return false;
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)));
-  const hex = Array.from(mac, b => b.toString(16).padStart(2, "0")).join("");
-  const base64 = btoa(String.fromCharCode(...mac));
+  const { hex, base64 } = await hmacHex(secret, body);
   return safeEqual(signature.toLowerCase(), hex) || safeEqual(signature, base64);
 }
 
