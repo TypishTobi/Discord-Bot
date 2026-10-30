@@ -557,7 +557,7 @@ button.chip{width:100%;font:inherit;text-align:left;cursor:pointer}
 .pd-desc.empty{color:var(--ash);font-style:italic}
 .pd-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
 .player-dialog .td-close{position:absolute;top:18px;right:18px}
-.player-dialog .td-stats{grid-template-columns:repeat(4,1fr)}
+.player-dialog .td-stats{grid-template-columns:repeat(auto-fit,minmax(118px,1fr))}
 .social-btn{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;font-weight:700;font-size:14px;color:#fff;text-decoration:none;transition:transform .15s,filter .15s}
 .social-btn svg{width:18px;height:18px}
 .social-btn:hover{transform:translateY(-2px);filter:brightness(1.1)}
@@ -565,7 +565,7 @@ button.chip{width:100%;font:inherit;text-align:left;cursor:pointer}
 .s-instagram{--brand:#d6249f}.s-twitch{--brand:#9146ff}.s-x{--brand:#111}
 .social-btn{background:var(--brand)}
 .social-btn.s-tiktok{box-shadow:-2px -2px 0 var(--brand-2),2px 2px 0 #fe2c55}
-@media (max-width:560px){.pd-body{gap:14px}.pd-skin{width:56px;height:112px}.player-dialog .td-stats{grid-template-columns:1fr 1fr}.pd-info h2{font-size:26px}}
+@media (max-width:560px){.pd-body{gap:14px}.pd-skin{width:56px;height:112px}.pd-info h2{font-size:26px}}
 
 /* Socials-Seite */
 .socials{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:16px;margin-top:30px}
