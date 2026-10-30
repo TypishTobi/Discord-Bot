@@ -502,6 +502,34 @@ footer .btn{padding:9px 18px;font-size:15px}
 .tier-badge.mini{min-width:0;padding:1px 6px;font-size:12px;border-radius:4px}
 .team-card.out{opacity:.62}
 .team-card.out::before{background:var(--border-red)}
+.team-card li.live em{font-style:normal;font-size:11px;font-weight:700;color:var(--ice);text-transform:uppercase;letter-spacing:.04em}
+.team-card.clickable{cursor:pointer;transition:border-color .2s,transform .2s}
+.team-card.clickable:hover{border-color:rgba(98,220,255,.55);transform:translateY(-2px)}
+.team-more{display:block;margin-top:12px;font-size:13px;font-weight:600;color:var(--ice)}
+.gen-tag{font-style:normal;font-family:var(--f-body);font-size:11px;font-weight:700;color:#08111f;background:var(--ice);border-radius:4px;padding:1px 6px;margin-left:8px;vertical-align:middle;text-transform:uppercase;letter-spacing:.04em}
+
+/* Team-Statistik */
+.team-dialog{width:min(560px,calc(100% - 32px));max-height:calc(100% - 48px);overflow:auto;padding:24px;color:var(--text);background:linear-gradient(160deg,var(--panel),var(--deep));border:1px solid rgba(98,220,255,.35);border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+.team-dialog::backdrop{background:rgba(3,8,18,.72);backdrop-filter:blur(4px)}
+.td-head{display:flex;align-items:center;gap:16px;margin-bottom:18px}
+.td-head h2{font-size:34px;margin:0}
+.td-close{margin-left:auto;width:40px;height:40px;font-size:26px;line-height:1;color:var(--soft);background:transparent;border:1px solid var(--line);border-radius:8px;cursor:pointer}
+.td-close:hover{color:#fff;border-color:var(--ice)}
+.td-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin:0;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.td-stats div{display:flex;flex-direction:column;gap:2px;padding:14px;background:var(--deep);min-width:0}
+.td-stats dt{font-size:13px;color:var(--soft);order:-1}
+.td-stats dd{margin:0;font-family:var(--f-display);font-size:26px;font-weight:700;color:var(--bolt);line-height:1.2}
+.td-stats dd .tier-badge{display:inline-block;font-size:22px}
+.td-stats small{font-size:12px;color:var(--ash);line-height:1.35}
+.td-facts{margin:16px 0;font-size:15px;color:var(--soft)}
+.td-table{width:100%;border-collapse:collapse;font-size:15px}
+.td-table th{text-align:left;font-size:13px;font-weight:600;color:var(--soft);padding:6px 8px;border-bottom:1px solid var(--line)}
+.td-table th:last-child,.td-table td:last-child{text-align:right}
+.td-table td{padding:8px;border-bottom:1px solid var(--line);vertical-align:middle}
+.td-who{display:flex;align-items:center;gap:10px;font-weight:600}
+.td-who .mc-head{width:28px;height:28px}
+.td-who em{font-style:normal;font-size:11px;font-weight:700;color:var(--ice);text-transform:uppercase;letter-spacing:.04em}
+@media (max-width:520px){.td-stats{grid-template-columns:1fr 1fr}.td-head h2{font-size:28px}}
 
 /* Spieler-Seite */
 .player-filters{display:flex;flex-wrap:wrap;gap:12px 20px;margin:4px 0 22px}

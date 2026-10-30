@@ -206,7 +206,9 @@
     var card=el("article","pcard");card.dataset.id=p.id;
     var top=el("div","pcard-top"),who=el("div");
     top.appendChild(headImg(p,56));
-    who.appendChild(el("h3",null,p.name||p.displayName));
+    var h3=el("h3",null,p.name||p.displayName);
+    if(isGeneral(p))h3.appendChild(el("em","gen-tag","General"));
+    who.appendChild(h3);
     if(p.minecraft)who.appendChild(el("p","mc","@"+p.minecraft));
     top.appendChild(who);
     var badge=el("span","tier-badge",p.tier||"–");if(p.tier)badge.dataset.t=p.tier;badge.title=p.tier?"Tier "+p.tier:"Noch nicht eingestuft";
@@ -274,14 +276,23 @@
   }
 
   // ---- Teams-Seite: 12 Teams mit Mitgliedern (aus den Spielerdaten) und gemeinsamen Herzen ----
+  // Bester Spieler zuerst: höchstes Tier, dann weiter links im Tier, dann mehr Kills.
+  // Der erste ist automatisch General.
+  function bestFirst(a,b){
+    var x=a.tierOrder==null?1e9:a.tierOrder,y=b.tierOrder==null?1e9:b.tierOrder;
+    return tierRank(a)-tierRank(b)||x-y||(b.kills||0)-(a.kills||0)||byName(a,b);
+  }
+  function teamMembers(n){return players.filter(function(p){return p.team===n;}).sort(bestFirst);}
+  function isGeneral(p){return !!p.team&&teamMembers(p.team)[0]===p;}
   function renderTeams(){
     if(!teamsGrid)return;
     var fixed=window.RADIUS_TEAMS||[];
     teamsGrid.textContent="";
     for(var n=1;n<=teamCount;n++){
       var lost=teamLost(n),left=maxHearts-lost;
-      var live=players.filter(function(p){return p.team===n;}).sort(function(a,b){return tierRank(a)-tierRank(b)||byName(a,b);});
-      var card=el("article","team-card"+(left===0?" out":""));card.dataset.team=n;
+      var live=teamMembers(n);
+      var card=el("article","team-card clickable"+(left===0?" out":""));card.dataset.team=n;
+      card.tabIndex=0;card.setAttribute("role","button");card.setAttribute("aria-label","Team "+n+": Statistik anzeigen");
       card.appendChild(el("h3",null,"Team "+n));
       var hearts=el("span","hearts"+(editing()?" edit":""));hearts.setAttribute("aria-label",left+" von "+maxHearts+" Team-Herzen übrig");
       for(var i=0;i<maxHearts;i++){
@@ -295,19 +306,95 @@
       for(var s=0;s<4;s++){
         var p=live[s],name=p?(p.name||p.displayName):fixed[n-1]&&fixed[n-1][s];
         if(name){
-          var li=el("li",s===0&&!p&&fixed[n-1]?"gen":"");
+          var li=el("li",s===0?"gen":"");
           if(p){li.classList.add("live");li.appendChild(headImg(p,22));}
           li.appendChild(el("span",null,name));
+          if(s===0)li.appendChild(el("em",null,"General"));
           if(p&&p.tier){var tb=el("span","tier-badge mini",p.tier);tb.dataset.t=p.tier;li.appendChild(tb);}
           ul.appendChild(li);
         }else ul.appendChild(el("li","empty",s===0?"General":"Platz "+(s+1)));
       }
-      card.appendChild(ul);teamsGrid.appendChild(card);
+      card.appendChild(ul);
+      card.appendChild(el("span","team-more","Statistik ansehen →"));
+      teamsGrid.appendChild(card);
     }
   }
+
+  // ---- Team-Statistik (Fenster beim Klick auf ein Team) ----
+  // Tier als Zahl: höchstes Tier = Anzahl der Tiers, niedrigstes = 1
+  function tierScore(p){var i=tiers.indexOf(p.tier);return i<0?null:tiers.length-i;}
+  function teamStats(n){
+    var list=teamMembers(n),scores=list.map(tierScore).filter(function(x){return x!=null;});
+    var kills=list.reduce(function(s,p){return s+(p.kills||0);},0);
+    var avg=scores.length?scores.reduce(function(s,x){return s+x;},0)/scores.length:null;
+    var topKiller=list.slice().sort(function(a,b){return (b.kills||0)-(a.kills||0);})[0];
+    return {n:n,list:list,avgScore:avg,avgTier:avg==null?null:tiers[tiers.length-Math.round(avg)],ranked:scores.length,
+      kills:kills,avgKills:list.length?kills/list.length:0,left:maxHearts-teamLost(n),
+      general:list[0]||null,topKiller:topKiller&&topKiller.kills?topKiller:null};
+  }
+  function fmt(x){return x.toLocaleString("de-DE",{maximumFractionDigits:1});}
+  var dialog=null;
+  function openTeamStats(n){
+    var st=teamStats(n);
+    // Platzierung nach Durchschnitts-Tier unter allen Teams mit eingestuften Spielern
+    var ranking=[];for(var t=1;t<=teamCount;t++){var o=teamStats(t);if(o.avgScore!=null)ranking.push(o);}
+    ranking.sort(function(a,b){return b.avgScore-a.avgScore||b.kills-a.kills;});
+    var place=ranking.indexOf(ranking.filter(function(o){return o.n===n;})[0])+1;
+
+    if(!dialog){
+      dialog=el("dialog","team-dialog");dialog.setAttribute("aria-labelledby","team-dialog-title");
+      dialog.addEventListener("click",function(e){if(e.target===dialog)dialog.close();}); // Klick neben das Fenster schließt
+      document.body.appendChild(dialog);
+    }
+    dialog.textContent="";
+    var head=el("div","td-head"),title=el("h2",null,"Team "+n);title.id="team-dialog-title";
+    var close=el("button","td-close","×");close.type="button";close.setAttribute("aria-label","Schließen");close.onclick=function(){dialog.close();};
+    var hearts=el("span","hearts"),h="";for(var i=0;i<maxHearts;i++)h+=heartSVG(i>=st.left);hearts.innerHTML=h;
+    hearts.setAttribute("aria-label",st.left+" von "+maxHearts+" Herzen übrig");
+    head.appendChild(title);head.appendChild(hearts);head.appendChild(close);dialog.appendChild(head);
+
+    var grid=el("dl","td-stats");
+    function box(label,value,extra){var d=el("div"),dd=el("dd");if(typeof value==="string")dd.textContent=value;else dd.appendChild(value);d.appendChild(el("dt",null,label));d.appendChild(dd);if(extra)d.appendChild(el("small",null,extra));grid.appendChild(d);}
+    var avgEl;
+    if(st.avgTier){avgEl=el("span","tier-badge",st.avgTier);avgEl.dataset.t=st.avgTier;}else avgEl="–";
+    box("Ø Tier",avgEl,st.avgScore!=null?"Wert "+fmt(st.avgScore)+" von "+tiers.length+(st.ranked<st.list.length?" · "+st.ranked+" eingestuft":""):null);
+    box("Platz",place?place+".":"–",place?"von "+ranking.length+" Teams nach Ø Tier":"noch keine Einstufung");
+    box("Kills gesamt",String(st.kills));
+    box("Ø Kills",fmt(st.avgKills),"pro Spieler");
+    box("Herzen übrig",st.left+" / "+maxHearts,st.left===0?"ausgeschieden":null);
+    box("Spieler",st.list.length+" / 4");
+    dialog.appendChild(grid);
+
+    var facts=el("p","td-facts");
+    facts.textContent=(st.general?"General: "+(st.general.name||st.general.displayName):"Noch kein General")+
+      (st.topKiller?" · Meiste Kills: "+(st.topKiller.name||st.topKiller.displayName)+" ("+st.topKiller.kills+")":"");
+    dialog.appendChild(facts);
+
+    if(st.list.length){
+      var table=el("table","td-table"),thead=el("thead"),tr=el("tr");
+      ["Spieler","Tier","Kills"].forEach(function(t){tr.appendChild(el("th",null,t));});thead.appendChild(tr);table.appendChild(thead);
+      var tbody=el("tbody");
+      st.list.forEach(function(p,i){
+        var row=el("tr"),who=el("td","td-who");who.appendChild(headImg(p,28));
+        var nm=el("span",null,p.name||p.displayName);who.appendChild(nm);if(i===0)who.appendChild(el("em",null,"General"));
+        var tc=el("td");if(p.tier){var b=el("span","tier-badge mini",p.tier);b.dataset.t=p.tier;tc.appendChild(b);}else tc.textContent="–";
+        row.appendChild(who);row.appendChild(tc);row.appendChild(el("td",null,String(p.kills||0)));tbody.appendChild(row);
+      });
+      table.appendChild(tbody);dialog.appendChild(table);
+    }else dialog.appendChild(el("p","note","Diesem Team sind noch keine Spieler zugeordnet."));
+
+    if(dialog.showModal)dialog.showModal();else dialog.setAttribute("open","");
+    close.focus();
+  }
+
   if(teamsGrid){
+    teamsGrid.addEventListener("keydown",function(e){
+      var card=e.target.closest(".team-card");
+      if(card&&e.target===card&&(e.key==="Enter"||e.key===" ")){e.preventDefault();openTeamStats(Number(card.dataset.team));}
+    });
     teamsGrid.addEventListener("click",function(e){
-      var b=e.target.closest(".heart-btn[data-team]");if(!b||!editing())return;
+      var b=e.target.closest(".heart-btn[data-team]");
+      if(!b||!editing()){var card=e.target.closest(".team-card");if(card&&!b)openTeamStats(Number(card.dataset.team));return;}
       var n=Number(b.dataset.team),lost=maxHearts-Number(b.dataset.left),t=teams.filter(function(x){return x.team===n;})[0];
       if(!t){t={team:n,heartsLost:0};teams.push(t);}
       var before=t.heartsLost;if(before===lost)return;
