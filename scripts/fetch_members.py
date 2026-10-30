@@ -2,12 +2,14 @@
 
 Aufruf:  python3 scripts/fetch_members.py <ausgabe.json> [--previous <alte.json>]
 
-Umgebungsvariablen: DISCORD_TOKEN, GUILD_ID, ROLE_IDS (kommagetrennt).
+Umgebungsvariablen: DISCORD_TOKEN, GUILD_ID, ROLE_IDS (kommagetrennt),
+optional MC_CHANNEL_ID (Kanal mit den Minecraft-Namen, siehe worker/worker.js).
 Mit --previous wird verglichen, ob sich etwas geändert hat; das Ergebnis landet
 als changed=true/false in $GITHUB_OUTPUT (falls gesetzt).
 """
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -55,6 +57,28 @@ def fetch_all_members(guild_id, token):
         after = batch[-1]["user"]["id"]
 
 
+MC_RE = re.compile(r"^mc:(\d+):(\w{3,16}):([0-9a-f]{32})$")
+
+
+def fetch_minecraft_names(channel_id, token):
+    """Liest die vom Worker geschriebenen Nachrichten; die neueste pro Nutzer gilt."""
+    bot_id = api_get("/users/@me", token)["id"]
+    names, before = {}, None
+    while True:
+        query = f"?limit=100&before={before}" if before else "?limit=100"
+        batch = api_get(f"/channels/{channel_id}/messages{query}", token)  # neueste zuerst
+        for msg in batch:
+            # Nur Nachrichten des eigenen Bots zählen, damit niemand Namen fälschen kann
+            if msg["author"]["id"] != bot_id:
+                continue
+            match = MC_RE.match(msg.get("content", ""))
+            if match and match.group(1) not in names:
+                names[match.group(1)] = {"name": match.group(2), "uuid": match.group(3)}
+        if len(batch) < 100:
+            return names
+        before = batch[-1]["id"]
+
+
 def avatar_url(guild_id, member):
     user = member["user"]
     if member.get("avatar"):  # Server-spezifischer Avatar
@@ -64,7 +88,8 @@ def avatar_url(guild_id, member):
     return f"{CDN}/embed/avatars/{(int(user['id']) >> 22) % 6}.png"
 
 
-def build_payload(guild, roles, members, role_ids):
+def build_payload(guild, roles, members, role_ids, mc_names=None):
+    mc_names = mc_names or {}
     roles_by_id = {r["id"]: r for r in roles}
     result = []
     for role_id in role_ids:
@@ -78,6 +103,8 @@ def build_payload(guild, roles, members, role_ids):
                 "id": m["user"]["id"],
                 "username": m["user"]["username"],
                 "displayName": m.get("nick") or m["user"].get("global_name") or m["user"]["username"],
+                "minecraft": mc_names.get(m["user"]["id"], {}).get("name"),
+                "minecraftUuid": mc_names.get(m["user"]["id"], {}).get("uuid"),
                 "avatar": avatar_url(guild["id"], m),
                 "roles": [r for r in role_ids if r in m["roles"]],
                 "joinedAt": m.get("joined_at"),
@@ -115,7 +142,9 @@ def main():
     guild = api_get(f"/guilds/{guild_id}", token)
     roles = api_get(f"/guilds/{guild_id}/roles", token)
     members = fetch_all_members(guild_id, token)
-    payload = build_payload(guild, roles, members, role_ids)
+    mc_channel = os.environ.get("MC_CHANNEL_ID", "").strip()
+    mc_names = fetch_minecraft_names(mc_channel, token) if mc_channel else {}
+    payload = build_payload(guild, roles, members, role_ids, mc_names)
 
     previous = None
     if previous_path and os.path.exists(previous_path):

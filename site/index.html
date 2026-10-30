@@ -77,7 +77,7 @@
                 <img src="${esc(m.avatar)}" alt="" loading="lazy">
                 <div>
                   <div class="name" ${role.color ? `style="color:${esc(role.color)}"` : ""}>${esc(m.displayName)}</div>
-                  <div class="user">@${esc(m.username)}</div>
+                  ${m.minecraft ? `<div class="user">@${esc(m.minecraft)}</div>` : ""}
                 </div>
               </div>`).join("")}</div>` : `<p class="empty">Niemand hat diese Rolle.</p>`}
           </section>`).join("");

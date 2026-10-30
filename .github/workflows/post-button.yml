@@ -1,0 +1,23 @@
+name: Minecraft-Button posten
+
+# Einmalig manuell starten: postet die Nachricht mit dem Button in den angegebenen Kanal.
+on:
+  workflow_dispatch:
+    inputs:
+      channel_id:
+        description: "Kanal-ID, in die der Button gepostet wird (z. B. #regeln)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Button posten
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          CHANNEL_ID: ${{ inputs.channel_id }}
+        run: python3 scripts/post_button.py "$CHANNEL_ID"
