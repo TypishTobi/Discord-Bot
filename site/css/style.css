@@ -563,6 +563,8 @@ button.chip{width:100%;font:inherit;text-align:left;cursor:pointer}
 .pd-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
 .player-dialog .td-close{position:absolute;top:18px;right:18px}
 .pd-sub{font-family:var(--f-body);font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin:18px 0 8px}
+.pd-stats{gap:8px;background:none;border:0;border-radius:0;overflow:visible}
+.pd-stats div{border:1px solid var(--line);border-radius:10px}
 .pd-stats dd{font-size:20px}
 .player-dialog .td-stats{grid-template-columns:repeat(auto-fit,minmax(118px,1fr))}
 .social-btn{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;font-weight:700;font-size:14px;color:#fff;text-decoration:none;transition:transform .15s,filter .15s}
