@@ -382,6 +382,26 @@
   }
   function byId(id){return players.filter(function(x){return x.id===id;})[0];}
 
+  // ---- Statistik-Namen: bekannte Felder auf Deutsch, alles andere lesbar gemacht ----
+  var STAT_LABELS={deaths:"Tode",death:"Tode",tode:"Tode",assists:"Assists",kd:"K/D",kdr:"K/D",kd_ratio:"K/D",
+    playtime:"Spielzeit",play_time:"Spielzeit",playtime_minutes:"Spielzeit (Min.)",spielzeit:"Spielzeit",
+    damage_dealt:"Schaden ausgeteilt",damage_taken:"Schaden erhalten",blocks_broken:"Blöcke abgebaut",blocks_placed:"Blöcke gesetzt",
+    mob_kills:"Mob-Kills",mobkills:"Mob-Kills",player_kills:"Spieler-Kills",killstreak:"Killstreak",best_killstreak:"Beste Killstreak",
+    joins:"Beitritte",logins:"Logins",combat_logouts:"Combat-Logouts",hearts_lost:"Herzen verloren",lives_lost:"Leben verloren",
+    distance:"Strecke",distance_walked:"Strecke gelaufen",jumps:"Sprünge",diamonds:"Diamanten",last_seen:"Zuletzt online",online:"Online"};
+  var STAT_FIRST=["deaths","death","tode","kd","kdr","kd_ratio","assists","playtime","play_time","spielzeit"];
+  function statOrder(k){var i=STAT_FIRST.indexOf(k.toLowerCase());return i<0?99:i;}
+  function statLabel(k){
+    var l=STAT_LABELS[k.toLowerCase()];if(l)return l;
+    var s=k.replace(/([a-z])([A-Z])/g,"$1 $2").replace(/[_-]+/g," ").trim();
+    return s.charAt(0).toUpperCase()+s.slice(1);
+  }
+  function statValue(k,v){
+    if(typeof v==="boolean")return v?"Ja":"Nein";
+    if(typeof v==="number")return v.toLocaleString("de-DE",{maximumFractionDigits:2});
+    return String(v);
+  }
+
   // ---- Spieler-Fenster: Skin, Tier, Team, Kills, Herzen, Beschreibung, YouTube/TikTok ----
   var playerDialog=null;
   function openPlayer(p){
@@ -418,6 +438,17 @@
     box("Kills",String(p.kills||0));
     if(p.team){var left=maxHearts-teamLost(p.team),h=el("span","hearts"),s="";for(var i=0;i<maxHearts;i++)s+=heartSVG(i>=left);h.innerHTML=s;box("Team-Herzen",h,left+" von "+maxHearts+" übrig");}
     d.appendChild(grid);
+
+    // Statistiken aus der Mod (alles, was die Mod-API für den Spieler liefert)
+    var keys=Object.keys(p.stats||{}).filter(function(k){return !/^kills?$/i.test(k);});
+    if(keys.length){
+      d.appendChild(el("h3","pd-sub","Statistiken"));
+      var sg=el("dl","td-stats pd-stats");
+      keys.sort(function(a,b){return statOrder(a)-statOrder(b)||statLabel(a).localeCompare(statLabel(b),"de");}).forEach(function(k){
+        var x=el("div");x.appendChild(el("dt",null,statLabel(k)));x.appendChild(el("dd",null,statValue(k,p.stats[k])));sg.appendChild(x);
+      });
+      d.appendChild(sg);
+    }
 
     if(d.showModal)d.showModal();else d.setAttribute("open","");
     close.focus();

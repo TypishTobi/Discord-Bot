@@ -426,13 +426,19 @@ async function buildMembers(env) {
   const teams = parseTeams(tierContents);
   let livesSynced = false;
   if (env.MOD_API_URL && env.MOD_API_TOKEN) {
+    const players = result.flatMap(r => r.members);
     try {
       const lives = await fetchModLives(env);
-      const players = result.flatMap(r => r.members);
       applyLivesToTeams(env, lives, players, teams);
+      applyStats(players, lives);
       livesSynced = true;
     } catch (err) {
       console.error("Mod-API nicht erreichbar, nutze gespeicherte Herzen:", err.message);
+    }
+    try {
+      applyStats(players, (await fetchModStats(env)).list);
+    } catch (err) {
+      console.error("Mod-Stats nicht abrufbar:", err.message);
     }
   }
 
@@ -449,19 +455,84 @@ async function buildMembers(env) {
   };
 }
 
-// --- Abgleich mit der Mod-API (GET /api/v1/lives) ------------------------------
+// --- Abgleich mit der Mod-API (GET /api/v1/lives und /api/v1/stats) -------------
 //   MOD_API_URL      Basisadresse des Mod-Panels, z. B. https://panel.example.de
-//   MOD_API_TOKEN    API-Token des Benutzers "website" (nur Rechte API + Leben; als Secret!)
+//   MOD_API_TOKEN    API-Token des Benutzers "website" (Rechte API + Leben, für Stats ggf. + Stats; als Secret!)
 //   MOD_SERVER_ID    Optional; nur diesen Server abfragen (?server_id=…), sonst alle
 //   MOD_START_LIVES  Optional; Leben, mit denen ein Spieler startet (Standard 3)
 
-// Liefert eine Liste { name, uuid, lives } – das Antwortformat wird tolerant gelesen
-async function fetchModLives(env) {
+const NAME_KEYS = ["name", "player", "spieler", "username", "playerName", "player_name", "minecraft", "mc_name"];
+const UUID_KEYS = ["uuid", "player_uuid", "playerUuid", "id"];
+// Diese Felder sind keine Statistik (Kennungen, Server, Zeitstempel, Mod-interne Angaben)
+const NOT_STATS = /^(name|player|spieler|username|playername|player_name|minecraft|mc_name|uuid|player_uuid|playeruuid|id|server.*|.*_id|created.*|updated.*|timestamp|ip|email|token|password)$/i;
+
+async function fetchModJson(env, path) {
   const base = env.MOD_API_URL.replace(/\/+$/, "");
-  const url = base + "/api/v1/lives" + (env.MOD_SERVER_ID ? "?server_id=" + encodeURIComponent(env.MOD_SERVER_ID) : "");
+  const url = base + path + (env.MOD_SERVER_ID ? "?server_id=" + encodeURIComponent(env.MOD_SERVER_ID) : "");
   const res = await fetch(url, { headers: { Authorization: `Bearer ${env.MOD_API_TOKEN}`, Accept: "application/json" } });
-  if (!res.ok) throw new Error(`Mod-API ${res.status}`);
-  return extractLives(await res.json());
+  if (!res.ok) throw Object.assign(new Error(`Mod-API ${res.status} bei ${path}`), { status: res.status });
+  return res.json();
+}
+
+// Liefert eine Liste { name, uuid, lives, stats } – das Antwortformat wird tolerant gelesen
+async function fetchModLives(env) {
+  return extractLives(await fetchModJson(env, "/api/v1/lives"));
+}
+
+// Stats wie die Leben: GET /api/v1/stats; liefert { list: [{ name, uuid, stats }], status }
+async function fetchModStats(env) {
+  try {
+    return { list: extractPlayerStats(await fetchModJson(env, "/api/v1/stats")), status: 200 };
+  } catch (err) {
+    if (err.status) return { list: [], status: err.status }; // z. B. 404 = gibt es nicht, 403 = Recht fehlt
+    throw err;
+  }
+}
+
+// Alle einfachen Werte eines Spieler-Eintrags außer Kennungen als Statistik
+function statsOf(node) {
+  const stats = {};
+  for (const [k, v] of Object.entries(node)) {
+    if (NOT_STATS.test(k)) continue;
+    if (typeof v === "number" && Number.isFinite(v)) stats[k] = v;
+    else if (typeof v === "string" && v.length <= 40 && v.trim()) stats[k] = v.trim();
+    else if (typeof v === "boolean") stats[k] = v;
+  }
+  return stats;
+}
+
+function extractPlayerStats(data) {
+  const out = [];
+  const visit = (node, depth) => {
+    if (depth > 5 || !node) return;
+    if (Array.isArray(node)) { node.forEach(n => visit(n, depth + 1)); return; }
+    if (typeof node !== "object") return;
+    const name = NAME_KEYS.map(k => node[k]).find(v => typeof v === "string");
+    const stats = statsOf(node);
+    if (name && Object.keys(stats).length) {
+      const uuid = UUID_KEYS.map(k => node[k]).find(v => typeof v === "string") || "";
+      // Stats können auch verschachtelt sein: { name, stats: { kills, … } }
+      for (const [, v] of Object.entries(node)) if (v && typeof v === "object" && !Array.isArray(v)) Object.assign(stats, statsOf(v));
+      out.push({ name, uuid: uuid.replace(/-/g, "").toLowerCase(), stats });
+      return;
+    }
+    for (const [, v] of Object.entries(node)) if (v && typeof v === "object") visit(v, depth + 1);
+  };
+  visit(data, 0);
+  return out;
+}
+
+// Stats an die Spieler hängen; Kills aus der Mod sind maßgeblich, wenn vorhanden
+function applyStats(players, list) {
+  if (!list || !list.length) return;
+  for (const p of players) {
+    const entry = list.find(l => (p.minecraftUuid && l.uuid && l.uuid === p.minecraftUuid) ||
+      (p.minecraft && l.name.toLowerCase() === p.minecraft.toLowerCase()));
+    if (!entry || !entry.stats) continue;
+    p.stats = Object.assign(p.stats || {}, entry.stats);
+    const killKey = Object.keys(p.stats).find(k => /^(kills?|player_?kills|playerkills|tötungen)$/i.test(k));
+    if (killKey && Number.isFinite(Number(p.stats[killKey]))) p.kills = Number(p.stats[killKey]);
+  }
 }
 
 function extractLives(data) {
@@ -472,11 +543,14 @@ function extractLives(data) {
     if (depth > 5 || !node) return;
     if (Array.isArray(node)) { node.forEach(n => visit(n, depth + 1)); return; }
     if (typeof node !== "object") return;
-    const name = pick(node, ["name", "player", "spieler", "username", "playerName", "player_name", "minecraft", "mc_name"]);
+    const name = pick(node, NAME_KEYS);
     const lives = num(pick(node, ["lives", "leben", "life", "hearts", "herzen"]));
     if (typeof name === "string" && lives !== null) {
-      const uuid = pick(node, ["uuid", "player_uuid", "playerUuid", "id"]);
-      out.push({ name, uuid: typeof uuid === "string" ? uuid.replace(/-/g, "").toLowerCase() : "", lives });
+      const uuid = pick(node, UUID_KEYS);
+      // weitere Werte im selben Eintrag (z. B. kills, deaths) gleich als Stats mitnehmen
+      const stats = statsOf(node);
+      for (const k of ["lives", "leben", "life", "hearts", "herzen"]) delete stats[k];
+      out.push({ name, uuid: typeof uuid === "string" ? uuid.replace(/-/g, "").toLowerCase() : "", lives, stats });
       return;
     }
     // Form { "Spielername": 3, … } oder verschachtelt (servers -> players)
@@ -513,14 +587,22 @@ async function modLivesCheck(env) {
   }
   try {
     const lives = await fetchModLives(env);
+    const stats = await fetchModStats(env);
     const data = await buildMembers(env);
     const players = data.roles.flatMap(r => r.members);
     const known = new Set(players.filter(p => p.minecraft).map(p => p.minecraft.toLowerCase()));
+    const statKeys = [...new Set([...lives, ...stats.list].flatMap(l => Object.keys(l.stats || {})))];
     return withCors(json({
       ok: true,
       playersFound: lives.length,
       players: lives.slice(0, 60).map(l => ({ name: l.name, lives: l.lives, onWebsite: known.has(l.name.toLowerCase()) })),
       teams: data.teams.filter(t => t.heartsLost).map(t => ({ team: t.team, heartsLeft: MAX_HEARTS - t.heartsLost })),
+      stats: {
+        endpointStatus: stats.status, // 200 = /api/v1/stats gefunden, 404 = gibt es nicht, 401/403 = Token/Recht
+        playersWithStats: stats.list.length,
+        fields: statKeys,
+        example: (stats.list[0] || lives.find(l => Object.keys(l.stats || {}).length)) || null,
+      },
     }));
   } catch (err) {
     return withCors(json({ ok: false, error: String(err.message).slice(0, 200) }, 502));
