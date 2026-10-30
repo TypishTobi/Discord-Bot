@@ -29,8 +29,9 @@
 //                      scripts/fetch_members.py plus Tier, 60 s zwischengespeichert)
 // POST /auth/code      { code } tauscht einen /login-Code gegen eine Sitzung
 // GET  /auth/me        Prüft eine Sitzung (Authorization: Bearer ...)
-// POST /tierlist       { player, tier } speichert ein Tier (nur Team ab MIN_ROLE_ID);
-//                      als Nachricht "tier:<discordId>:<tier>" im Tier-Kanal, neueste gilt
+// POST /tierlist       { tier, order: [ids], moved } speichert ein Tier samt Reihenfolge
+//                      (nur Team ab MIN_ROLE_ID); { player, tier: null } entfernt aus der Tierlist.
+//                      Als Zeilen "tier:<discordId>:<tier>:<platz>" im Tier-Kanal, neueste gilt
 // POST /player         { player, team, kills, description } speichert Spielerdaten;
 //                      als "pdata:<discordId>:<base64url(JSON)>" im Tier-Kanal, neueste gilt
 // POST /team           { team, heartsLost } speichert die verlorenen Team-Herzen (gemeinsam
@@ -45,7 +46,9 @@ const SESSION_HOURS = 12;
 const TIERS = ["S+", "S", "A+", "A", "B+", "B", "C+", "C"];
 const NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
 const ENTRY_RE = /^(?:-# )?(?:mc:(\d+):(\w{3,16}):([0-9a-f]{32})|mcdel:(\d+))$/m;
-const TIER_RE = /^(?:-# )?tier:(\d+):([SABC]\+?|-)$/m;
+// tier:<id>:<tier>[:<platz>] – mehrere Zeilen pro Nachricht möglich (ganze Reihenfolge eines Tiers)
+const TIER_RE = /^(?:-# )?tier:(\d+):([SABC]\+?|-)(?::(\d+))?$/gm;
+const TIER_LINES_PER_MESSAGE = 40; // Discord erlaubt 2000 Zeichen pro Nachricht
 const LOGIN_RE = /^(?:-# )?login:([A-Z2-9]{8}):(\d+):(\d+)$/m;
 const PDATA_RE = /^(?:-# )?pdata:(\d+):([A-Za-z0-9_-]+)$/m;
 const TEAM_RE = /^(?:-# )?team:(\d+):(\d+)$/m;
@@ -289,13 +292,16 @@ function parsePlayers(contents) {
   return latest;
 }
 
+// Map discordId -> { tier, order }; "-" (nicht eingestuft) wird weggelassen
 function parseTiers(contents) {
   const latest = new Map();
   for (const content of contents) {
-    const m = TIER_RE.exec(content);
-    if (m && !latest.has(m[1])) latest.set(m[1], TIERS.includes(m[2]) ? m[2] : null);
+    for (const m of content.matchAll(TIER_RE)) {
+      if (latest.has(m[1])) continue;
+      latest.set(m[1], TIERS.includes(m[2]) ? { tier: m[2], order: m[3] ? Number(m[3]) : null } : null);
+    }
   }
-  for (const [id, tier] of latest) if (!tier) latest.delete(id);
+  for (const [id, entry] of latest) if (!entry) latest.delete(id);
   return latest;
 }
 
@@ -368,7 +374,8 @@ async function buildMembers(env) {
           ...rank,
           minecraft: mc?.name ?? null,
           minecraftUuid: mc?.uuid ?? null,
-          tier: tiers.get(m.user.id) ?? null,
+          tier: tiers.get(m.user.id)?.tier ?? null,
+          tierOrder: tiers.get(m.user.id)?.order ?? null, // Platz innerhalb des Tiers (1 = ganz links)
           team: playerData.get(m.user.id)?.team ?? null,
           kills: playerData.get(m.user.id)?.kills ?? 0,
           description: playerData.get(m.user.id)?.description ?? "",
@@ -568,7 +575,7 @@ async function teamWrite(request, env, ctx, build, { requirePlayer = true } = {}
     const body = await request.json().catch(() => ({}));
     const player = String(body.player ?? "");
     if (requirePlayer && !/^\d{5,25}$/.test(player)) return withCors(json({ error: "Ungültige Angaben." }, 400));
-    const entry = build(body, player, session);
+    const entry = await build(body, player, session);
     if (entry.error) return withCors(json({ error: entry.error }, 400));
 
     // Nur Spieler mit einer der Website-Rollen
@@ -581,10 +588,13 @@ async function teamWrite(request, env, ctx, build, { requirePlayer = true } = {}
       }
     }
 
-    await discord(env, `/channels/${tierChannel(env)}/messages`, "POST", {
-      content: entry.content,
-      allowed_mentions: { parse: [] }, // Spieler nicht benachrichtigen
-    });
+    // content darf auch eine Liste sein (lange Einträge auf mehrere Nachrichten verteilt)
+    for (const content of [].concat(entry.content)) {
+      await discord(env, `/channels/${tierChannel(env)}/messages`, "POST", {
+        content,
+        allowed_mentions: { parse: [] }, // Spieler nicht benachrichtigen
+      });
+    }
 
     // Zwischengespeicherte Mitgliederliste verwerfen, damit die Änderung sofort sichtbar ist
     ctx.waitUntil(caches.default.delete(new Request(new URL("/members.json", request.url).toString())));
@@ -595,16 +605,39 @@ async function teamWrite(request, env, ctx, build, { requirePlayer = true } = {}
   }
 }
 
+// { tier, order: [ids von links nach rechts], moved } speichert die ganze Reihenfolge eines Tiers;
+// { player, tier: null } nimmt einen Spieler aus der Tierlist
 async function tierSave(request, env, ctx) {
-  return teamWrite(request, env, ctx, (body, player, session) => {
+  return teamWrite(request, env, ctx, async (body, player, session) => {
     const tier = body.tier ?? null;
     if (tier !== null && !TIERS.includes(tier)) return { error: "Ungültige Angaben." };
-    return {
-      content: `<@${player}> → ${tier ? `Tier **${tier}**` : "*nicht eingestuft*"} (von <@${session.uid}>)\n` +
-        `-# tier:${player}:${tier ?? "-"}`,
-      result: { player, tier },
-    };
-  });
+    const ids = Array.isArray(body.order) ? body.order.map(String) : [player];
+    if (!ids.length || ids.length > 100 || new Set(ids).size !== ids.length ||
+        ids.some(id => !/^\d{5,25}$/.test(id)) || (tier === null && ids.length !== 1)) {
+      return { error: "Ungültige Angaben." };
+    }
+    const allowed = await participantIds(env);
+    if (ids.some(id => !allowed.has(id))) return { error: "Dieser Spieler ist kein Teilnehmer." };
+
+    const moved = ids.includes(String(body.moved)) ? String(body.moved) : ids.length === 1 ? ids[0] : null;
+    const header = (tier === null ? `<@${ids[0]}> → *nicht eingestuft*`
+      : moved ? `<@${moved}> → Tier **${tier}**, Platz ${ids.indexOf(moved) + 1} von ${ids.length}`
+      : `Tier **${tier}** neu sortiert`) + ` (von <@${session.uid}>)`;
+    const lines = ids.map((id, i) => tier === null ? `-# tier:${id}:-` : `-# tier:${id}:${tier}:${i + 1}`);
+    const messages = [];
+    for (let i = 0; i < lines.length; i += TIER_LINES_PER_MESSAGE) {
+      messages.push((i === 0 ? header + "\n" : "") + lines.slice(i, i + TIER_LINES_PER_MESSAGE).join("\n"));
+    }
+    return { content: messages, result: { tier, order: tier === null ? [] : ids, player: ids[0] } };
+  }, { requirePlayer: false });
+}
+
+// IDs aller Mitglieder mit einer der Website-Rollen
+async function participantIds(env) {
+  const guildId = env.GUILD_ID || DEFAULT_GUILD_ID;
+  const roleIds = (env.ROLE_IDS || DEFAULT_ROLE_IDS).split(",").map(s => s.trim());
+  const members = await fetchAllMembers(env, guildId);
+  return new Set(members.filter(m => m.roles.some(id => roleIds.includes(id))).map(m => m.user.id));
 }
 
 // Spielerdaten: Team, Kills, Beschreibung (als JSON in base64url)

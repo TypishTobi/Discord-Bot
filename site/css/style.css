@@ -489,6 +489,8 @@ footer .btn{padding:9px 18px;font-size:15px}
 .tierlist.editing .tier-label{cursor:pointer}
 .tierlist.editing .tier-label:hover{filter:brightness(1.12)}
 .tier-row.over{background:rgba(98,220,255,.1)}
+.tierlist.editing .tchip.ins-before{box-shadow:-5px 0 0 -1px var(--bolt)}
+.tierlist.editing .tchip.ins-after{box-shadow:5px 0 0 -1px var(--bolt)}
 /* Teams live: Mitglieder mit Kopf und Tier, gemeinsame Herzen (im Team-Login antippbar) */
 .heart-btn{display:block;background:none;border:0;padding:0;margin:0;line-height:0}
 .hearts.edit .heart-btn{cursor:pointer;transition:transform .15s}

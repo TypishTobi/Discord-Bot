@@ -67,7 +67,7 @@
     // div statt button, weil Firefox Buttons nicht ziehen lässt
     var c=el("div","tchip");
     c.dataset.id=p.id;
-    if(editing()){c.tabIndex=0;c.setAttribute("role","button");c.draggable=true;c.setAttribute("aria-pressed",selected===p.id?"true":"false");c.title="Antippen, dann Tier wählen – oder ziehen";}
+    if(editing()){c.tabIndex=0;c.setAttribute("role","button");c.draggable=true;c.setAttribute("aria-pressed",selected===p.id?"true":"false");c.title="Ziehen – oder antippen und dann Ziel antippen. Pfeiltasten verschieben.";}
     c.appendChild(headImg(p,32));c.appendChild(el("span",null,p.name||p.displayName));
     if(selected===p.id)c.classList.add("sel");
     return c;
@@ -83,45 +83,95 @@
     r.appendChild(lab);r.appendChild(zone);return r;
   }
   function byName(a,b){return (a.name||a.displayName).localeCompare(b.name||b.displayName,"de");}
+  // Innerhalb eines Tiers gilt der gespeicherte Platz (links = besser), ohne Platz alphabetisch dahinter
+  function byOrder(a,b){
+    var x=a.tierOrder==null?1e9:a.tierOrder,y=b.tierOrder==null?1e9:b.tierOrder;
+    return x-y||byName(a,b);
+  }
+  function inTier(t){return players.filter(function(p){return p.tier===t;}).sort(byOrder);}
   function renderBoard(){
     if(!board)return;
     board.textContent="";
     if(!players.length){board.appendChild(el("p","note","Noch keine Spieler."));return;}
     board.classList.toggle("editing",editing());
-    tiers.forEach(function(t){board.appendChild(row(t,t,players.filter(function(p){return p.tier===t;}).sort(byName)));});
+    tiers.forEach(function(t){board.appendChild(row(t,t,inTier(t)));});
     var open=players.filter(function(p){return !p.tier||tiers.indexOf(p.tier)<0;}).sort(byName);
     if(open.length||editing())board.appendChild(row(null,"Offen",open));
   }
 
-  // ---- Bearbeiten: Ziehen (Maus) oder Antippen + Tier antippen (Touch/Tastatur) ----
-  function move(id,tier){
-    var p=players.filter(function(x){return x.id===id;})[0];if(!p||p.tier===tier)return;
-    var before=p.tier;p.tier=tier;selected=null;renderBoard();
+  // ---- Bearbeiten: Ziehen (Maus), Antippen + Ziel antippen (Touch) oder Pfeiltasten ----
+  // move(id, tier, beforeId): Spieler in ein Tier setzen, vor beforeId (null = ganz rechts)
+  function move(id,tier,beforeId){
+    var p=players.filter(function(x){return x.id===id;})[0];if(!p)return;
+    var list=tier?inTier(tier).filter(function(x){return x.id!==id;}):[];
+    var at=beforeId?list.map(function(x){return x.id;}).indexOf(beforeId):-1;
+    if(tier)list.splice(at<0?list.length:at,0,p);
+    var ids=list.map(function(x){return x.id;});
+    if(p.tier===tier&&(!tier||inTier(tier).map(function(x){return x.id;}).join()===ids.join())){selected=null;renderBoard();return;}
+    // Vorher-Stand merken, um bei einem Fehler zurückzusetzen
+    var snapshot=players.map(function(x){return {p:x,tier:x.tier,order:x.tierOrder};});
+    p.tier=tier;list.forEach(function(x,i){x.tierOrder=i+1;});if(!tier)p.tierOrder=null;
+    selected=null;renderBoard();focusChip(id);
     say("Speichere …");
-    fetch(WORKER+"/tierlist",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+session},body:JSON.stringify({player:id,tier:tier})})
-      .then(function(r){return r.json().then(function(d){if(!r.ok)throw Object.assign(new Error(d.error||r.status),{status:r.status});return d;});})
-      .then(function(){say((p.name||p.displayName)+" → "+(tier||"offen")+" gespeichert.");})
-      .catch(function(e){p.tier=before;renderBoard();say(e.message||"Speichern fehlgeschlagen.",true);if(e.status===401||e.status===403)logout(true);});
+    post("/tierlist",tier?{tier:tier,order:ids,moved:id}:{player:id,tier:null})
+      .then(function(){say((p.name||p.displayName)+" → "+(tier?tier+", Platz "+(ids.indexOf(id)+1):"offen")+" gespeichert.");})
+      .catch(function(e){snapshot.forEach(function(s){s.p.tier=s.tier;s.p.tierOrder=s.order;});renderBoard();say(e.message||"Speichern fehlgeschlagen.",true);if(e.status===401||e.status===403)logout(true);});
+  }
+  function focusChip(id){var c=board.querySelector('.tchip[data-id="'+id+'"]');if(c)c.focus();}
+  // Einfügestelle beim Ziehen: vor dem Spieler unter dem Mauszeiger, oder dahinter (rechte Hälfte)
+  function dropTarget(e,dragId){
+    var c=e.target.closest(".tchip");
+    if(!c)return {before:null,chip:null};
+    if(c.dataset.id===dragId){var n=c.nextElementSibling;return {before:n&&n.classList.contains("tchip")?n.dataset.id:null,chip:null};}
+    var rect=c.getBoundingClientRect(),right=e.clientX>rect.left+rect.width/2;
+    var next=right?c.nextElementSibling:c;
+    while(next&&(!next.classList.contains("tchip")||next.dataset.id===dragId))next=next.nextElementSibling;
+    return {before:next?next.dataset.id:null,chip:c,side:right?"after":"before"};
   }
   if(board){
+  var dragId=null;
   board.addEventListener("click",function(e){
     if(!editing())return;
     var c=e.target.closest(".tchip"),lab=e.target.closest(".tier-label");
+    if(c&&selected&&selected!==c.dataset.id){move(selected,c.closest(".tier-row").dataset.tier||null,c.dataset.id);return;}
     if(c){
       var id=c.dataset.id;selected=selected===id?null:id;renderBoard();
-      say(selected?"Jetzt das Ziel-Tier links antippen.":"");
-      var again=board.querySelector('.tchip[data-id="'+id+'"]');if(again)again.focus();
+      say(selected?"Jetzt einen Spieler antippen (davor einordnen) oder ein Tier links (ganz rechts einordnen).":"");
+      focusChip(id);
     }
-    else if(lab&&selected){move(selected,lab.parentNode.dataset.tier||null);}
+    else if(lab&&selected){move(selected,lab.parentNode.dataset.tier||null,null);}
   });
-  board.addEventListener("keydown",function(e){var c=e.target.closest(".tchip");if(c&&editing()&&(e.key==="Enter"||e.key===" ")){e.preventDefault();c.click();}});
-  board.addEventListener("dragstart",function(e){var c=e.target.closest&&e.target.closest(".tchip");if(c&&editing()){e.dataTransfer.setData("text/plain",c.dataset.id);e.dataTransfer.effectAllowed="move";c.classList.add("drag");}});
-  board.addEventListener("dragend",function(e){var c=e.target.closest&&e.target.closest(".tchip");if(c)c.classList.remove("drag");});
-  board.addEventListener("dragover",function(e){var r=e.target.closest(".tier-row");if(r&&editing()){e.preventDefault();e.dataTransfer.dropEffect="move";clearOver();r.classList.add("over");}});
-  board.addEventListener("dragleave",function(e){var r=e.target.closest(".tier-row");if(r&&!r.contains(e.relatedTarget))r.classList.remove("over");});
-  board.addEventListener("drop",function(e){var r=e.target.closest(".tier-row");if(!r||!editing())return;e.preventDefault();clearOver();move(e.dataTransfer.getData("text/plain"),r.dataset.tier||null);});
+  board.addEventListener("keydown",function(e){
+    var c=e.target.closest(".tchip");if(!c||!editing())return;
+    if(e.key==="Enter"||e.key===" "){e.preventDefault();c.click();return;}
+    var id=c.dataset.id,tier=c.closest(".tier-row").dataset.tier||null;
+    if(e.key==="ArrowLeft"||e.key==="ArrowRight"){
+      if(!tier)return;e.preventDefault();
+      var ids=inTier(tier).map(function(x){return x.id;}),i=ids.indexOf(id);
+      if(e.key==="ArrowLeft"&&i>0)move(id,tier,ids[i-1]);
+      if(e.key==="ArrowRight"&&i<ids.length-1)move(id,tier,ids[i+2]||null);
+    }
+    if(e.key==="ArrowUp"||e.key==="ArrowDown"){
+      e.preventDefault();
+      var all=tiers.concat([null]),k=all.indexOf(tier),to=all[k+(e.key==="ArrowUp"?-1:1)];
+      if(k+(e.key==="ArrowUp"?-1:1)>=0&&k+(e.key==="ArrowUp"?-1:1)<all.length)move(id,to,null);
+    }
+  });
+  board.addEventListener("dragstart",function(e){var c=e.target.closest&&e.target.closest(".tchip");if(c&&editing()){dragId=c.dataset.id;e.dataTransfer.setData("text/plain",dragId);e.dataTransfer.effectAllowed="move";c.classList.add("drag");}});
+  board.addEventListener("dragend",function(e){var c=e.target.closest&&e.target.closest(".tchip");if(c)c.classList.remove("drag");dragId=null;clearOver();});
+  board.addEventListener("dragover",function(e){
+    var r=e.target.closest(".tier-row");if(!r||!editing())return;
+    e.preventDefault();e.dataTransfer.dropEffect="move";clearOver();r.classList.add("over");
+    var t=dropTarget(e,dragId);if(t.chip)t.chip.classList.add("ins-"+t.side);
+  });
+  board.addEventListener("dragleave",function(e){var r=e.target.closest(".tier-row");if(r&&!r.contains(e.relatedTarget))clearOver();});
+  board.addEventListener("drop",function(e){
+    var r=e.target.closest(".tier-row");if(!r||!editing())return;e.preventDefault();
+    var id=e.dataTransfer.getData("text/plain"),t=dropTarget(e,id);clearOver();
+    move(id,r.dataset.tier||null,t.before);
+  });
   }
-  function clearOver(){[].forEach.call(board.querySelectorAll(".over"),function(x){x.classList.remove("over");});}
+  function clearOver(){[].forEach.call(board.querySelectorAll(".over,.ins-before,.ins-after"),function(x){x.classList.remove("over","ins-before","ins-after");});}
 
   // ---- Spieler-Seite: Karten mit Team, Tier, Kills, Herzen und Beschreibung ----
   var HEART=["01100110","11111111","11111111","11111111","01111110","00111100","00011000"];
