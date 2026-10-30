@@ -90,7 +90,8 @@ async function handleSubmit(interaction, env) {
     }
   } catch (err) {
     console.error(err);
-    reply = "⚠️ Das hat gerade nicht geklappt. Bitte versuche es in ein paar Minuten erneut.";
+    reply = "⚠️ Das hat gerade nicht geklappt. Bitte versuche es in ein paar Minuten erneut.\n" +
+      `-# Fehler: ${String(err.message).slice(0, 150)}`;
   }
 
   // Die "denkt nach"-Antwort durch das Ergebnis ersetzen
@@ -107,7 +108,7 @@ async function lookupProfile(name) {
     `https://api.minecraftservices.com/minecraft/profile/lookup/name/${name}`,
     `https://api.mojang.com/users/profiles/minecraft/${name}`,
   ];
-  let lastError;
+  const errors = [];
   for (const url of urls) {
     const res = await fetch(url);
     if (res.status === 200) {
@@ -115,9 +116,18 @@ async function lookupProfile(name) {
       return { id: data.id, name: data.name };
     }
     if (res.status === 404 || res.status === 204) return null;
-    lastError = new Error(`Mojang-API ${res.status} bei ${url}`); // z. B. Rate-Limit -> nächste API
+    errors.push(`Mojang ${res.status}`); // z. B. Rate-Limit oder Cloudflare blockiert -> nächste API
   }
-  throw lastError;
+
+  // Mojang blockiert Cloudflare-Server häufig; playerdb.co fragt Mojang stellvertretend ab
+  const res = await fetch(`https://playerdb.co/api/player/minecraft/${name}`, {
+    headers: { "User-Agent": "discord-role-site (github.com/TypishTobi/Discord-Bot)" },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (data.success) return { id: data.data.player.raw_id, name: data.data.player.username };
+  if (data.code === "minecraft.invalid_username") return null;
+  errors.push(`playerdb ${res.status}`);
+  throw new Error(`Namensprüfung fehlgeschlagen (${errors.join(", ")})`);
 }
 
 async function discord(env, path, method, payload) {
