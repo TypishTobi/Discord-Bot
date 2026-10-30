@@ -18,14 +18,16 @@
 //   MIN_ROLE_ID         Niedrigste Rolle, die /mcname benutzen darf (z. B. Mod);
 //                       alle Rollen darüber dürfen es auch
 //   GUILD_ID, ROLE_IDS  Optional; Standard siehe unten (Server/Rolle der Website)
-//   DISCORD_CLIENT_SECRET  Client Secret der App (OAuth2-Seite, als Secret!) für
-//                       den Discord-Login der Tierlist; signiert auch die Sitzungen
-//   TIER_CHANNEL_ID     Optional; Kanal für Tier-Einträge (Standard: MC_CHANNEL_ID)
+//   TIER_CHANNEL_ID     Optional; Kanal für Tier-Einträge und Login-Codes (Standard: MC_CHANNEL_ID)
 //   SITE_URL            Optional; Adresse der Website (Standard siehe unten)
+//   SESSION_SECRET      Optional; Schlüssel für Website-Sitzungen (Standard: Bot-Token)
+//
+// Team-Login: /login in Discord liefert einen Einmal-Code (nur für den Nutzer sichtbar,
+// 10 Minuten gültig), der als "login:<code>:<discordId>:<ablauf>" im Tier-Kanal liegt.
 //
 // GET  /members.json   Mitgliederliste live für die Website (gleiches Format wie
 //                      scripts/fetch_members.py plus Tier, 60 s zwischengespeichert)
-// GET  /auth/login     Discord-Login fürs Team, leitet mit #session=... zurück
+// POST /auth/code      { code } tauscht einen /login-Code gegen eine Sitzung
 // GET  /auth/me        Prüft eine Sitzung (Authorization: Bearer ...)
 // POST /tierlist       { player, tier } speichert ein Tier (nur Team ab MIN_ROLE_ID);
 //                      als Nachricht "tier:<discordId>:<tier>" im Tier-Kanal, neueste gilt
@@ -40,17 +42,18 @@ const TIERS = ["S+", "S", "A+", "A", "B+", "B", "C+", "C"];
 const NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
 const ENTRY_RE = /^(?:-# )?(?:mc:(\d+):(\w{3,16}):([0-9a-f]{32})|mcdel:(\d+))$/m;
 const TIER_RE = /^(?:-# )?tier:(\d+):([SABC]\+?|-)$/m;
+const LOGIN_RE = /^(?:-# )?login:([A-Z2-9]{8}):(\d+):(\d+)$/m;
+const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // ohne 0/O und 1/I
+const CODE_MINUTES = 10;
 const ADMINISTRATOR = 1n << 3n;
 const EPHEMERAL = 64;
-let cachedAppId = null;
 
 export default {
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
     if (request.method === "OPTIONS") return withCors(new Response(null, { status: 204 }));
     if (request.method === "GET" && path === "/members.json") return membersResponse(request, env, ctx);
-    if (request.method === "GET" && path === "/auth/login") return authLogin(request, env);
-    if (request.method === "GET" && path === "/auth/callback") return authCallback(request, env);
+    if (request.method === "POST" && path === "/auth/code") return authCode(request, env);
     if (request.method === "GET" && path === "/auth/me") return authMe(request, env);
     if (request.method === "POST" && path === "/tierlist") return tierSave(request, env, ctx);
     if (request.method !== "POST") return new Response("Discord-Minecraft-Worker läuft.");
@@ -112,12 +115,17 @@ export default {
       ctx.waitUntil(respond(interaction, () => handleCommand(interaction, env)));
       return json({ type: 5, data: { flags: EPHEMERAL } });
     }
+    if (interaction.type === 2 && interaction.data.name === "login") {
+      ctx.waitUntil(respond(interaction, () => handleLogin(interaction, env)));
+      return json({ type: 5, data: { flags: EPHEMERAL } });
+    }
 
     return json({ type: 4, data: { content: "Unbekannte Aktion.", flags: EPHEMERAL } });
   },
 };
 
 // Führt die Aktion aus und ersetzt die "denkt nach"-Antwort durch das Ergebnis
+// (Text oder { content, components })
 async function respond(interaction, action) {
   let reply;
   try {
@@ -130,7 +138,10 @@ async function respond(interaction, action) {
   await fetch(`${API}/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content: reply, allowed_mentions: { parse: [] } }),
+    body: JSON.stringify({
+      ...(typeof reply === "string" ? { content: reply } : reply),
+      allowed_mentions: { parse: [] },
+    }),
   });
 }
 
@@ -428,73 +439,65 @@ function siteUrl(env) {
   return env.SITE_URL || DEFAULT_SITE_URL;
 }
 
-// Nur zurück auf die eigene Website leiten, damit die Sitzung nirgendwo anders landet
-function safeReturn(env, target) {
-  try {
-    const url = new URL(target);
-    if (url.origin === new URL(siteUrl(env)).origin) return url.origin + url.pathname + url.search;
-  } catch {}
-  return siteUrl(env);
+function tierChannel(env) {
+  return env.TIER_CHANNEL_ID || env.MC_CHANNEL_ID;
 }
 
-async function appId(env) {
-  cachedAppId ??= (await discord(env, "/applications/@me", "GET")).id;
-  return cachedAppId;
-}
-
-async function authLogin(request, env) {
-  const url = new URL(request.url);
-  const state = await sign(env, {
-    r: safeReturn(env, url.searchParams.get("return") || ""),
-    exp: Date.now() + 10 * 60 * 1000,
-  });
-  const params = new URLSearchParams({
-    client_id: await appId(env),
-    response_type: "code",
-    scope: "identify",
-    redirect_uri: url.origin + "/auth/callback",
-    state,
-    prompt: "none",
-  });
-  return Response.redirect("https://discord.com/oauth2/authorize?" + params, 302);
-}
-
-async function authCallback(request, env) {
-  const url = new URL(request.url);
-  const state = await verifySigned(env, url.searchParams.get("state"));
-  if (!state) return new Response("Login abgelaufen. Bitte noch einmal versuchen.", { status: 400 });
-  const back = hash => Response.redirect(state.r + "#" + hash, 302);
-
-  const code = url.searchParams.get("code");
-  if (!code) return back("login=abgebrochen");
-
-  const tokenRes = await fetch(`${API}/oauth2/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: await appId(env),
-      client_secret: env.DISCORD_CLIENT_SECRET,
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: url.origin + "/auth/callback",
-    }),
-  });
-  if (!tokenRes.ok) {
-    console.error("OAuth-Fehler", tokenRes.status, await tokenRes.text());
-    return back("login=fehler");
+// /login in Discord: Einmal-Code erzeugen und im Tier-Kanal hinterlegen
+async function handleLogin(interaction, env) {
+  if (!(await isTeam(interaction, env))) {
+    return "❌ Den Team-Login dürfen nur Mod und alle Rollen darüber benutzen.";
   }
-  const { access_token } = await tokenRes.json();
-  const userRes = await fetch(`${API}/users/@me`, { headers: { Authorization: `Bearer ${access_token}` } });
-  if (!userRes.ok) return back("login=fehler");
-  const user = await userRes.json();
-
-  if (!(await isTeamUser(env, user.id))) return back("login=kein-team");
-  const session = await sign(env, {
-    uid: user.id,
-    name: user.global_name || user.username,
-    exp: Date.now() + SESSION_HOURS * 3600 * 1000,
+  const userId = interaction.member.user.id;
+  const random = crypto.getRandomValues(new Uint8Array(8));
+  const code = Array.from(random, b => CODE_CHARS[b % CODE_CHARS.length]).join("");
+  const expires = Date.now() + CODE_MINUTES * 60 * 1000;
+  await discord(env, `/channels/${tierChannel(env)}/messages`, "POST", {
+    content: `🔑 Login-Code für <@${userId}> erstellt\n-# login:${code}:${userId}:${expires}`,
+    allowed_mentions: { parse: [] },
   });
-  return back("session=" + session);
+  const pretty = code.slice(0, 4) + "-" + code.slice(4);
+  return {
+    content: `🔑 Dein Login-Code für die Tierlist: **\`${pretty}\`**\n` +
+      `Gib ihn auf der Website unter **Team-Login** ein oder klick auf den Button. ` +
+      `Er gilt ${CODE_MINUTES} Minuten und nur einmal.`,
+    components: [{
+      type: 1,
+      components: [{ type: 2, style: 5, label: "Direkt anmelden", url: `${siteUrl(env)}tierlist.html#code=${code}` }],
+    }],
+  };
+}
+
+// Website: Code prüfen, verbrauchen (Nachricht löschen) und Sitzung ausstellen
+async function authCode(request, env) {
+  try {
+    const body = await request.json().catch(() => ({}));
+    const code = String(body.code ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (code.length !== 8) return withCors(json({ error: "Der Code hat 8 Zeichen, z. B. ABCD-EFGH." }, 400));
+
+    const botId = (await discord(env, "/users/@me", "GET")).id;
+    const channel = tierChannel(env);
+    const recent = await discord(env, `/channels/${channel}/messages?limit=100`, "GET");
+    let found = null;
+    for (const msg of recent) {
+      const m = msg.author.id === botId && LOGIN_RE.exec(msg.content);
+      if (m && m[1] === code) { found = { id: msg.id, uid: m[2], exp: Number(m[3]) }; break; }
+    }
+    if (!found || found.exp < Date.now()) {
+      return withCors(json({ error: "Code ungültig oder abgelaufen. Hol dir mit /login einen neuen." }, 401));
+    }
+    await discord(env, `/channels/${channel}/messages/${found.id}`, "DELETE").catch(() => {});
+    if (!(await isTeamUser(env, found.uid))) return withCors(json({ error: "Nur das Team darf die Tierlist ändern." }, 403));
+
+    const guildId = env.GUILD_ID || DEFAULT_GUILD_ID;
+    const member = await discord(env, `/guilds/${guildId}/members/${found.uid}`, "GET");
+    const name = member.nick || member.user.global_name || member.user.username;
+    const session = await sign(env, { uid: found.uid, name, exp: Date.now() + SESSION_HOURS * 3600 * 1000 });
+    return withCors(json({ session, name }));
+  } catch (err) {
+    console.error(err);
+    return withCors(json({ error: "Anmeldung fehlgeschlagen: " + String(err.message).slice(0, 150) }, 502));
+  }
 }
 
 async function sessionFrom(request, env) {
@@ -545,10 +548,11 @@ async function tierSave(request, env, ctx) {
   }
 }
 
-// Signierte Daten: base64url(JSON) + "." + base64url(HMAC-SHA256), Schlüssel = Client Secret
+// Signierte Daten: base64url(JSON) + "." + base64url(HMAC-SHA256), Schlüssel = SESSION_SECRET oder Bot-Token
 async function hmacKey(env) {
-  if (!env.DISCORD_CLIENT_SECRET) throw new Error("DISCORD_CLIENT_SECRET fehlt im Worker");
-  return crypto.subtle.importKey("raw", new TextEncoder().encode(env.DISCORD_CLIENT_SECRET),
+  const secret = env.SESSION_SECRET || env.DISCORD_TOKEN;
+  if (!secret) throw new Error("DISCORD_TOKEN fehlt im Worker");
+  return crypto.subtle.importKey("raw", new TextEncoder().encode("radius2-session:" + secret),
     { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
 }
 

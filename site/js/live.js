@@ -1,6 +1,7 @@
 // Radius 2 – Live-Daten aus Discord: Team-Liste und Tierlist.
 // Die Daten liefert der Cloudflare Worker (worker/worker.js); das Team meldet sich
-// dort mit Discord an und kann die Spieler per Drag & Drop oder Antippen einstufen.
+// mit einem Einmal-Code aus dem Discord-Befehl /login an und kann die Spieler
+// per Drag & Drop oder Antippen einstufen.
 (function(){
   var WORKER="https://mc-namen.typischtobi66.workers.dev";
   var DEFAULT_TIERS=["S+","S","A+","A","B+","B","C+","C"];
@@ -122,11 +123,22 @@
       var out=el("button","btn ghost","Abmelden");out.type="button";out.onclick=function(){logout(false);};
       authBox.appendChild(out);
     }else{
-      var a=el("a","btn ghost","Team-Login");
-      a.href=WORKER+"/auth/login?return="+encodeURIComponent(location.origin+location.pathname);
-      a.title="Nur für das Team: mit Discord anmelden, um die Tierlist zu bearbeiten";
-      authBox.appendChild(a);
+      // Team-Login per Einmal-Code: in Discord /login eingeben, Code hier eintragen
+      var form=el("form","tier-login"),input=el("input"),go=el("button","btn ghost","Team-Login");
+      input.name="code";input.placeholder="Code aus /login";input.autocomplete="one-time-code";
+      input.maxLength=9;input.setAttribute("aria-label","Login-Code aus dem Discord-Befehl /login");
+      go.type="submit";
+      form.appendChild(input);form.appendChild(go);
+      form.onsubmit=function(e){e.preventDefault();if(input.value.trim())redeem(input.value);else{input.focus();say("Gib in Discord /login ein und trag den Code hier ein.");}};
+      authBox.appendChild(form);
     }
+  }
+  function redeem(code){
+    say("Prüfe Code …");
+    return fetch(WORKER+"/auth/code",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code:code})})
+      .then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||"Anmeldung fehlgeschlagen.");return d;});})
+      .then(function(d){session=d.session;store(SESSION_KEY,session);me={name:d.name};renderAuth();renderBoard();say("Angemeldet. Du kannst die Spieler jetzt einstufen.");})
+      .catch(function(e){say(e.message,true);});
   }
   function logout(expired){
     session=null;me=null;selected=null;store(SESSION_KEY,null);renderAuth();renderBoard();
@@ -140,16 +152,11 @@
       .catch(function(){logout(false);});
   }
 
-  // Rückkehr vom Discord-Login: #session=... oder #login=...
-  var hash=location.hash.slice(1),notes={"login=kein-team":"Die Tierlist kann nur das Team ab Mod bearbeiten.","login=abgebrochen":"Anmeldung abgebrochen.","login=fehler":"Anmeldung fehlgeschlagen. Bitte versuche es noch einmal."};
-  if(hash.indexOf("session=")===0){store(SESSION_KEY,hash.slice(8));}
-  if(board&&(hash.indexOf("session=")===0||notes[hash])){
-    history.replaceState(null,"",location.pathname+location.search+"#tierlist");
-    if(notes[hash])say(notes[hash],hash!=="login=abgebrochen");
-    setTimeout(function(){document.getElementById("tierlist").scrollIntoView();},0);
-  }
+  // Button "Direkt anmelden" aus der /login-Antwort: tierlist.html#code=...
+  var hash=location.hash.slice(1),linkCode=board&&hash.indexOf("code=")===0?hash.slice(5):null;
+  if(linkCode)history.replaceState(null,"",location.pathname+location.search);
   session=read(SESSION_KEY);
 
   renderAuth();
-  load().then(function(){if(board)return checkSession();});
+  load().then(function(){if(!board)return;return linkCode?redeem(linkCode):checkSession();});
 })();

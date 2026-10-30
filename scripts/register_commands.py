@@ -1,4 +1,4 @@
-"""Registriert den Slash-Befehl /mcname auf dem Server (einmalig bzw. nach Änderungen).
+"""Registriert die Slash-Befehle /mcname und /login auf dem Server (einmalig bzw. nach Änderungen).
 
 Aufruf:  python3 scripts/register_commands.py
 Umgebungsvariablen: DISCORD_TOKEN, GUILD_ID
@@ -39,6 +39,11 @@ COMMANDS = [{
             ],
         },
     ],
+}, {
+    "name": "login",
+    "description": "Einmal-Code für den Team-Login auf der Website (Tierlist)",
+    "default_member_permissions": str(MODERATE_MEMBERS),
+    "contexts": [0],
 }]
 
 
