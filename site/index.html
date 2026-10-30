@@ -94,7 +94,7 @@
               ${esc(rank)} — ${group.members.length}</h2>
             <div class="grid">${group.members.map(m => `
               <div class="member">
-                <img src="${esc(head(m))}" alt="" loading="lazy">
+                <img src="${esc(head(m))}" alt="">
                 <div>
                   <div class="name" ${group.color ? `style="color:${esc(group.color)}"` : ""}>${esc(m.name || m.displayName)}</div>
                   ${m.minecraft ? `<div class="user">@${esc(m.minecraft)}</div>` : ""}
