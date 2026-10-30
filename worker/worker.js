@@ -41,9 +41,10 @@
 //
 // Event-Empfänger für den Logger der Mod (Typ "HTTP-API"):
 // POST /api/events     nimmt Events an (Titel, Beschreibung, Felder – auch im Discord-Embed-Format),
-//                      geprüft mit EVENT_SECRET; speichert sie als Nachricht im Kanal EVENT_CHANNEL_ID
+//                      geprüft mit EVENT_SECRET; speichert die letzten 50 in Cloudflare KV (EVENTS_KV)
 // GET  /events.json    die letzten Events für die Live-Seite (15 Sekunden zwischengespeichert)
-//   EVENT_CHANNEL_ID    eigener versteckter Kanal für Events (nicht #mc-namen, das bleibt schnell)
+//   EVENTS_KV           KV-Namespace-Bindung (Settings -> Bindings) für die Events
+//   EVENT_CHANNEL_ID    Optional statt KV: eigener versteckter Discord-Kanal für Events
 //   EVENT_SECRET        dasselbe Secret wie im Logger der Mod (als Secret!; MAVE_SECRET geht auch);
 //                       ohne Secret wird nichts angenommen. Prüft X-Mave-Timestamp + X-Mave-Signature
 
@@ -817,6 +818,7 @@ function fromB64url(text) {
 
 const EVENT_RE = /^(?:-# )?ev:([A-Za-z0-9_-]+)$/m;
 const EVENTS_SHOWN = 50;
+const EVENTS_KV_KEY = "events";
 const EVENTS_CACHE_SECONDS = 15;
 
 async function hmacHex(secret, text) {
@@ -880,10 +882,21 @@ async function eventReceive(request, env, ctx) {
     const body = await request.text();
     if (body.length > 20000) return json({ error: "Zu groß" }, 413);
     if (!(await eventAuthorized(request, env, body))) return json({ error: "Secret fehlt oder ist falsch" }, 401);
-    if (!env.EVENT_CHANNEL_ID) return json({ error: "EVENT_CHANNEL_ID ist im Worker nicht gesetzt" }, 503);
+    if (!env.EVENTS_KV && !env.EVENT_CHANNEL_ID) {
+      return json({ error: "Kein Speicher eingerichtet: KV-Bindung EVENTS_KV (oder EVENT_CHANNEL_ID) fehlt im Worker" }, 503);
+    }
     let data;
     try { data = JSON.parse(body); } catch { data = { title: "Event", description: body.slice(0, 400) }; }
     const ev = normalizeEvent(data);
+
+    // Cloudflare KV: die letzten Events als eine Liste unter einem Schlüssel
+    if (env.EVENTS_KV) {
+      const list = (await env.EVENTS_KV.get(EVENTS_KV_KEY, "json")) || [];
+      list.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ...ev });
+      await env.EVENTS_KV.put(EVENTS_KV_KEY, JSON.stringify(list.slice(0, EVENTS_SHOWN)));
+      ctx.waitUntil(caches.default.delete(new Request(new URL("/events.json", request.url).toString())));
+      return json({ ok: true });
+    }
     // Discord erlaubt 2000 Zeichen pro Nachricht: notfalls Felder und Beschreibung kürzen
     const encode = () => b64url(new TextEncoder().encode(JSON.stringify(ev)));
     let encoded = encode();
@@ -909,7 +922,9 @@ async function eventsResponse(request, env, ctx) {
   const cached = await cache.match(cacheKey);
   if (cached) return cached;
   let events = [];
-  if (env.EVENT_CHANNEL_ID) {
+  if (env.EVENTS_KV) {
+    events = (await env.EVENTS_KV.get(EVENTS_KV_KEY, "json")) || [];
+  } else if (env.EVENT_CHANNEL_ID) {
     try {
       const botId = (await discord(env, "/users/@me", "GET")).id;
       const msgs = await discord(env, `/channels/${env.EVENT_CHANNEL_ID}/messages?limit=${EVENTS_SHOWN}`, "GET");
@@ -923,7 +938,7 @@ async function eventsResponse(request, env, ctx) {
       return withCors(json({ error: "Events konnten nicht geladen werden" }, 502));
     }
   }
-  const response = withCors(new Response(JSON.stringify({ events, configured: !!env.EVENT_CHANNEL_ID }), {
+  const response = withCors(new Response(JSON.stringify({ events, configured: !!(env.EVENTS_KV || env.EVENT_CHANNEL_ID) }), {
     headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": `public, max-age=${EVENTS_CACHE_SECONDS}` },
   }));
   ctx.waitUntil(cache.put(cacheKey, response.clone()));
