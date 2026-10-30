@@ -456,7 +456,7 @@ footer .btn{padding:9px 18px;font-size:15px}
 .tier-auth .btn{padding:11px 18px;font-size:14px}
 .tier-who{font-size:15px;color:var(--soft)}
 .tier-login{display:flex;gap:8px;flex-wrap:wrap}
-.tier-login input{font:600 15px var(--f-body);letter-spacing:.08em;text-transform:uppercase;width:13ch;padding:10px 12px;color:var(--text);background:var(--deep);border:1px solid #2e3540;border-radius:0}
+.tier-login input{font:600 15px var(--f-body);letter-spacing:.08em;text-transform:uppercase;width:17ch;padding:10px 12px;color:var(--text);background:var(--deep);border:1px solid #2e3540;border-radius:0}
 .tier-login input::placeholder{text-transform:none;letter-spacing:0;color:var(--ash)}
 .tier-login input:focus{outline:2px solid var(--bolt);outline-offset:1px}
 .tier-msg{min-height:1.6em;margin:18px 0 0;font-size:15px;color:var(--ice)}
