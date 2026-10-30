@@ -20,8 +20,11 @@
 
   // ---- Daten laden: live vom Worker, sonst die von GitHub erzeugte Kopie ----
   function getJSON(url){return fetch(url,{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error(r.status);return r.json();});}
-  function load(){
-    return getJSON(WORKER+"/members.json").catch(function(){return getJSON("members.json");}).then(function(data){
+  // quiet: Hintergrund-Aktualisierung; bei einem Fehler bleibt die bisherige Anzeige stehen
+  function load(quiet){
+    var source=getJSON(WORKER+"/members.json");
+    if(!quiet)source=source.catch(function(){return getJSON("members.json");});
+    return source.then(function(data){
       var seen={};players=[];
       (data.roles||[]).forEach(function(role){(role.members||[]).forEach(function(m){if(!seen[m.id]){seen[m.id]=1;players.push(m);}});});
       if(data.tiers&&data.tiers.length)tiers=data.tiers;
@@ -32,10 +35,21 @@
       livesSynced=!!data.livesSynced;
       renderRoster();rerender();
     }).catch(function(){
+      if(quiet)return;
       if(board)board.innerHTML='<p class="note">Die Tierlist konnte gerade nicht geladen werden.</p>';
       if(grid)grid.innerHTML='<p class="note">Die Spieler konnten gerade nicht geladen werden.</p>';
     });
   }
+  // Alle 30 Sekunden neue Daten holen (Herzen, Kills, Tiers …) – aber nicht, solange jemand
+  // gerade etwas bearbeitet, auswählt, zieht, tippt oder ein Fenster offen hat
+  var REFRESH_MS=30000;
+  function busy(){
+    var a=document.activeElement,tag=a&&a.tagName;
+    return !!(editId||selected||document.querySelector("dialog[open], .tchip.drag")||
+      tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT");
+  }
+  setInterval(function(){if(!document.hidden&&!busy())load(true);},REFRESH_MS);
+  document.addEventListener("visibilitychange",function(){if(!document.hidden&&!busy())load(true);});
   function rerender(){renderBoard();renderPlayers();renderTeams();renderCreators();renderSocials();}
   function teamLost(n){var t=teams.filter(function(x){return x.team===n;})[0];return t?Math.min(t.heartsLost||0,maxHearts):0;}
 

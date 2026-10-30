@@ -26,7 +26,7 @@
 // 10 Minuten gültig), der als "login:<code>:<discordId>:<ablauf>" im Tier-Kanal liegt.
 //
 // GET  /members.json   Mitgliederliste live für die Website (gleiches Format wie
-//                      scripts/fetch_members.py plus Tier, 60 s zwischengespeichert)
+//                      scripts/fetch_members.py plus Tier, 25 s zwischengespeichert)
 // POST /auth/code      { code } tauscht einen /login-Code gegen eine Sitzung
 // GET  /auth/me        Prüft eine Sitzung (Authorization: Bearer ...)
 // POST /tierlist       { tier, order: [ids], moved } speichert ein Tier samt Reihenfolge
@@ -54,7 +54,7 @@ const DEFAULT_GUILD_ID = "1502797926982746224";
 const DEFAULT_ROLE_IDS = "1510380603479036054";
 const DEFAULT_MIN_ROLE_ID = "1510377990113198163"; // 🛡️ ┃ Moderator
 const DEFAULT_SITE_URL = "https://typishtobi.github.io/Discord-Bot/";
-const MEMBERS_CACHE_SECONDS = 60;
+const MEMBERS_CACHE_SECONDS = 25; // kürzer als das 30-s-Neuladen der Website, damit jede Abfrage frische Daten bringt
 const SESSION_HOURS = 12;
 const TIERS = ["S+", "S", "A+", "A", "B+", "B", "C+", "C", "D"];
 const NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
