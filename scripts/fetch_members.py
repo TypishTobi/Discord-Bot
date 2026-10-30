@@ -103,7 +103,12 @@ def split_rank(display_name, roles_by_key):
     if "|" not in display_name:
         return None, display_name.strip(), -1, None
     rank, name = (part.strip() for part in display_name.split("|", 1))
-    role = roles_by_key.get(role_key(rank))
+    key = role_key(rank)
+    role = roles_by_key.get(key)
+    if not role and len(key) >= 3:
+        # Abkürzungen wie "Mod" -> "Moderator", "Dev" -> "Developer"; höchste passende Rolle
+        matches = [r for k, r in roles_by_key.items() if k.startswith(key)]
+        role = max(matches, key=lambda r: r["position"], default=None)
     if not role:
         return rank, name, -1, None
     color = f"#{role['color']:06x}" if role["color"] else None
