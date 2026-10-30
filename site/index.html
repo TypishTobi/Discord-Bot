@@ -68,19 +68,33 @@
         const updated = data.updatedAt ? new Date(data.updatedAt).toLocaleString("de-DE") : "–";
         document.getElementById("meta").textContent = `${total} Mitglieder · Stand: ${updated}`;
 
-        document.getElementById("roles").innerHTML = data.roles.map(role => `
+        // Nach dem Rang vor dem "|" gruppieren ("Admin | Mrtx" -> Gruppe "Admin", Name "Mrtx").
+        // Die Daten kommen schon sortiert (höchster Rang zuerst), daher reicht die Reihenfolge.
+        const groups = new Map();
+        const seen = new Set();
+        for (const role of data.roles) {
+          for (const m of role.members) {
+            if (seen.has(m.id)) continue;
+            seen.add(m.id);
+            const rank = m.rank || "Weitere";
+            if (!groups.has(rank)) groups.set(rank, { color: m.rankColor || role.color, members: [] });
+            groups.get(rank).members.push(m);
+          }
+        }
+
+        document.getElementById("roles").innerHTML = groups.size ? [...groups].map(([rank, group]) => `
           <section>
-            <h2><span class="dot" style="${role.color ? `background:${esc(role.color)}` : ""}"></span>
-              ${esc(role.name)} — ${role.members.length}</h2>
-            ${role.members.length ? `<div class="grid">${role.members.map(m => `
+            <h2><span class="dot" style="${group.color ? `background:${esc(group.color)}` : ""}"></span>
+              ${esc(rank)} — ${group.members.length}</h2>
+            <div class="grid">${group.members.map(m => `
               <div class="member">
                 <img src="${esc(m.avatar)}" alt="" loading="lazy">
                 <div>
-                  <div class="name" ${role.color ? `style="color:${esc(role.color)}"` : ""}>${esc(m.displayName)}</div>
+                  <div class="name" ${group.color ? `style="color:${esc(group.color)}"` : ""}>${esc(m.name || m.displayName)}</div>
                   ${m.minecraft ? `<div class="user">@${esc(m.minecraft)}</div>` : ""}
                 </div>
-              </div>`).join("")}</div>` : `<p class="empty">Niemand hat diese Rolle.</p>`}
-          </section>`).join("");
+              </div>`).join("")}</div>
+          </section>`).join("") : `<p class="empty">Noch keine Mitglieder.</p>`;
       })
       .catch(() => {
         document.getElementById("meta").innerHTML = '<span class="error">Mitgliederliste konnte nicht geladen werden.</span>';

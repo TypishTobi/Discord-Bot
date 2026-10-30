@@ -93,9 +93,29 @@ def avatar_url(guild_id, member):
     return f"{CDN}/embed/avatars/{(int(user['id']) >> 22) % 6}.png"
 
 
+def role_key(name):
+    """Vergleichsschlüssel für Rollennamen: nur Buchstaben/Ziffern, klein ("🛡 ┃ Sr. Admin" -> "sradmin")."""
+    return "".join(c for c in name.casefold() if c.isalnum())
+
+
+def split_rank(display_name, roles_by_key):
+    """'Admin | Mrtx' -> Rang 'Admin' + Name 'Mrtx'; Rang wird einer Discord-Rolle zugeordnet."""
+    if "|" not in display_name:
+        return None, display_name.strip(), -1, None
+    rank, name = (part.strip() for part in display_name.split("|", 1))
+    role = roles_by_key.get(role_key(rank))
+    if not role:
+        return rank, name, -1, None
+    color = f"#{role['color']:06x}" if role["color"] else None
+    return rank, name, role["position"], color
+
+
 def build_payload(guild, roles, members, role_ids, mc_names=None):
     mc_names = mc_names or {}
     roles_by_id = {r["id"]: r for r in roles}
+    roles_by_key = {}
+    for r in sorted(roles, key=lambda r: r["position"]):  # bei gleichen Namen gewinnt die höhere Rolle
+        roles_by_key[role_key(r["name"])] = r
     result = []
     for role_id in role_ids:
         role = roles_by_id.get(role_id)
@@ -103,20 +123,27 @@ def build_payload(guild, roles, members, role_ids, mc_names=None):
             print(f"WARNUNG: Rolle {role_id} nicht gefunden", file=sys.stderr)
             continue
         holders = [m for m in members if role_id in m["roles"] and not m["user"].get("bot")]
-        entries = [
-            {
+        entries = []
+        for m in holders:
+            display_name = m.get("nick") or m["user"].get("global_name") or m["user"]["username"]
+            rank, name, rank_position, rank_color = split_rank(display_name, roles_by_key)
+            entries.append({
                 "id": m["user"]["id"],
                 "username": m["user"]["username"],
-                "displayName": m.get("nick") or m["user"].get("global_name") or m["user"]["username"],
+                "displayName": display_name,
+                "rank": rank,
+                "name": name,
+                "rankPosition": rank_position,
+                "rankColor": rank_color,
                 "minecraft": mc_names.get(m["user"]["id"], {}).get("name"),
                 "minecraftUuid": mc_names.get(m["user"]["id"], {}).get("uuid"),
                 "avatar": avatar_url(guild["id"], m),
                 "roles": [r for r in role_ids if r in m["roles"]],
                 "joinedAt": m.get("joined_at"),
-            }
-            for m in holders
-        ]
-        entries.sort(key=lambda e: e["displayName"].casefold())
+            })
+        # Höchster Rang zuerst, Leute ohne Rang ganz unten, innerhalb eines Rangs alphabetisch
+        entries.sort(key=lambda e: (-e["rankPosition"], e["rank"] is None,
+                                    (e["rank"] or "").casefold(), e["name"].casefold()))
         result.append({
             "id": role_id,
             "name": role["name"],
