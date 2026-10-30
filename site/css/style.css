@@ -587,6 +587,9 @@ button.chip{width:100%;font:inherit;text-align:left;cursor:pointer}
 .socials-form{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;align-items:end}
 .socials-form .pfield input{width:100%}
 
+.hearts-source{margin:8px 0 0;font-size:14px;font-weight:600;color:#ff8a9a}
+.hearts-source:empty{display:none}
+
 /* Live-Seite: Events aus der Mod */
 .events{display:grid;gap:10px;max-width:820px;margin-top:8px}
 .event{--ev:var(--ice);display:flex;gap:14px;align-items:flex-start;padding:14px 16px;background:var(--deep);border:1px solid var(--line);border-left:4px solid var(--ev);border-radius:12px}

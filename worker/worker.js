@@ -88,6 +88,7 @@ export default {
     if (request.method === "POST" && path === "/api/events") return eventReceive(request, env, ctx);
     if (request.method === "GET" && path === "/events.json") return eventsResponse(request, env, ctx);
     if (request.method === "POST" && path === "/events/delete") return eventDelete(request, env, ctx);
+    if (request.method === "GET" && path === "/mod/lives-check") return modLivesCheck(env);
     if (request.method !== "POST") return new Response("Discord-Minecraft-Worker läuft.");
     // Discord schickt Interaktionen an "/"; unbekannte Adressen bekommen eine klare Antwort
     // (mit CORS, sonst meldet der Browser nur "Failed to fetch")
@@ -420,16 +421,110 @@ async function buildMembers(env) {
   }
   result.sort((a, b) => b.position - a.position);
   for (const r of result) delete r.position;
+
+  // Ist die Mod-API eingerichtet, kommen die Team-Herzen aus den aktuellen Leben der Spieler
+  const teams = parseTeams(tierContents);
+  let livesSynced = false;
+  if (env.MOD_API_URL && env.MOD_API_TOKEN) {
+    try {
+      const lives = await fetchModLives(env);
+      const players = result.flatMap(r => r.members);
+      applyLivesToTeams(env, lives, players, teams);
+      livesSynced = true;
+    } catch (err) {
+      console.error("Mod-API nicht erreichbar, nutze gespeicherte Herzen:", err.message);
+    }
+  }
+
   return {
     guild: guild.name,
     updatedAt: new Date().toISOString(),
     tiers: TIERS,
     teamCount: TEAM_COUNT,
     maxHearts: MAX_HEARTS,
-    teams: parseTeams(tierContents),
+    teams,
+    livesSynced, // true = Herzen kommen live aus der Mod, Bearbeiten auf der Website ist dann aus
     links: parseLinks(tierContents),
     roles: result,
   };
+}
+
+// --- Abgleich mit der Mod-API (GET /api/v1/lives) ------------------------------
+//   MOD_API_URL      Basisadresse des Mod-Panels, z. B. https://panel.example.de
+//   MOD_API_TOKEN    API-Token des Benutzers "website" (nur Rechte API + Leben; als Secret!)
+//   MOD_SERVER_ID    Optional; nur diesen Server abfragen (?server_id=…), sonst alle
+//   MOD_START_LIVES  Optional; Leben, mit denen ein Spieler startet (Standard 3)
+
+// Liefert eine Liste { name, uuid, lives } – das Antwortformat wird tolerant gelesen
+async function fetchModLives(env) {
+  const base = env.MOD_API_URL.replace(/\/+$/, "");
+  const url = base + "/api/v1/lives" + (env.MOD_SERVER_ID ? "?server_id=" + encodeURIComponent(env.MOD_SERVER_ID) : "");
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${env.MOD_API_TOKEN}`, Accept: "application/json" } });
+  if (!res.ok) throw new Error(`Mod-API ${res.status}`);
+  return extractLives(await res.json());
+}
+
+function extractLives(data) {
+  const out = [];
+  const pick = (o, keys) => { for (const k of keys) if (o[k] !== undefined && o[k] !== null) return o[k]; };
+  const num = v => (typeof v === "number" ? v : /^\s*-?\d+\s*$/.test(String(v ?? "")) ? Number(v) : null);
+  const visit = (node, depth) => {
+    if (depth > 5 || !node) return;
+    if (Array.isArray(node)) { node.forEach(n => visit(n, depth + 1)); return; }
+    if (typeof node !== "object") return;
+    const name = pick(node, ["name", "player", "spieler", "username", "playerName", "player_name", "minecraft", "mc_name"]);
+    const lives = num(pick(node, ["lives", "leben", "life", "hearts", "herzen"]));
+    if (typeof name === "string" && lives !== null) {
+      const uuid = pick(node, ["uuid", "player_uuid", "playerUuid", "id"]);
+      out.push({ name, uuid: typeof uuid === "string" ? uuid.replace(/-/g, "").toLowerCase() : "", lives });
+      return;
+    }
+    // Form { "Spielername": 3, … } oder verschachtelt (servers -> players)
+    const entries = Object.entries(node);
+    if (entries.length && entries.every(([, v]) => num(v) !== null)) {
+      for (const [k, v] of entries) out.push({ name: k, uuid: "", lives: num(v) });
+      return;
+    }
+    for (const [, v] of entries) if (typeof v === "object") visit(v, depth + 1);
+  };
+  visit(data, 0);
+  return out;
+}
+
+// Ein verlorenes Leben = ein Team-Herz: Team verliert Σ (Startleben − aktuelle Leben) seiner Spieler
+function applyLivesToTeams(env, lives, players, teams) {
+  const start = Number(env.MOD_START_LIVES) || 3;
+  const find = p => lives.find(l => (p.minecraftUuid && l.uuid && l.uuid === p.minecraftUuid) ||
+    (p.minecraft && l.name.toLowerCase() === p.minecraft.toLowerCase()));
+  const lost = {};
+  for (const p of players) {
+    const entry = find(p);
+    if (!entry) continue;
+    p.lives = entry.lives;
+    if (p.team) lost[p.team] = (lost[p.team] || 0) + Math.max(0, start - entry.lives);
+  }
+  for (const t of teams) t.heartsLost = Math.min(MAX_HEARTS, lost[t.team] || 0);
+}
+
+// Test-Adresse: was der Worker aus der Mod-API versteht (ohne Token oder Rohdaten preiszugeben)
+async function modLivesCheck(env) {
+  if (!env.MOD_API_URL || !env.MOD_API_TOKEN) {
+    return withCors(json({ ok: false, error: "MOD_API_URL oder MOD_API_TOKEN fehlt im Worker" }));
+  }
+  try {
+    const lives = await fetchModLives(env);
+    const data = await buildMembers(env);
+    const players = data.roles.flatMap(r => r.members);
+    const known = new Set(players.filter(p => p.minecraft).map(p => p.minecraft.toLowerCase()));
+    return withCors(json({
+      ok: true,
+      playersFound: lives.length,
+      players: lives.slice(0, 60).map(l => ({ name: l.name, lives: l.lives, onWebsite: known.has(l.name.toLowerCase()) })),
+      teams: data.teams.filter(t => t.heartsLost).map(t => ({ team: t.team, heartsLeft: MAX_HEARTS - t.heartsLost })),
+    }));
+  } catch (err) {
+    return withCors(json({ ok: false, error: String(err.message).slice(0, 200) }, 502));
+  }
 }
 
 async function fetchAllMembers(env, guildId) {

@@ -9,7 +9,7 @@
   var board=document.getElementById("tier-board"),grid=document.getElementById("player-grid"),teamsGrid=document.getElementById("teams-grid");
   var creatorGrid=document.getElementById("creator-grid"),creatorAdd=document.getElementById("creator-add");
   var authBox=document.getElementById("team-auth"),msg=document.getElementById("team-msg");
-  var players=[],teams=[],tiers=DEFAULT_TIERS,teamCount=12,maxHearts=4,session=null,me=null,selected=null,editId=null;
+  var livesSynced=false,players=[],teams=[],tiers=DEFAULT_TIERS,teamCount=12,maxHearts=4,session=null,me=null,selected=null,editId=null;
 
   function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
   function head(p){return "https://minotar.net/helm/"+encodeURIComponent(p.minecraftUuid||"MHF_Steve")+"/64.png";}
@@ -29,6 +29,7 @@
       if(data.maxHearts)maxHearts=data.maxHearts;
       teams=data.teams||[];
       links=data.links||{};
+      livesSynced=!!data.livesSynced;
       renderRoster();rerender();
     }).catch(function(){
       if(board)board.innerHTML='<p class="note">Die Tierlist konnte gerade nicht geladen werden.</p>';
@@ -287,17 +288,22 @@
     if(!teamsGrid)return;
     var fixed=window.RADIUS_TEAMS||[];
     teamsGrid.textContent="";
+    var src=document.getElementById("hearts-source");
+    if(!src){src=el("p","hearts-source");src.id="hearts-source";teamsGrid.parentNode.insertBefore(src,teamsGrid);}
+    src.textContent=livesSynced?"❤ Die Herzen kommen live aus dem Spiel.":"";
     for(var n=1;n<=teamCount;n++){
       var lost=teamLost(n),left=maxHearts-lost;
       var live=teamMembers(n);
       var card=el("article","team-card clickable"+(left===0?" out":""));card.dataset.team=n;
       card.tabIndex=0;card.setAttribute("role","button");card.setAttribute("aria-label","Team "+n+": Statistik anzeigen");
       card.appendChild(el("h3",null,"Team "+n));
-      var hearts=el("span","hearts"+(editing()?" edit":""));hearts.setAttribute("aria-label",left+" von "+maxHearts+" Team-Herzen übrig");
+      // Kommen die Herzen live aus der Mod, sind sie hier nicht bearbeitbar
+      var heartEdit=editing()&&!livesSynced;
+      var hearts=el("span","hearts"+(heartEdit?" edit":""));hearts.setAttribute("aria-label",left+" von "+maxHearts+" Team-Herzen übrig");
       for(var i=0;i<maxHearts;i++){
         // Volle Herzen links, verlorene rechts; im Bearbeiten-Modus antippen zum Verlieren/Zurückgeben
-        var isLost=i>=left,hb=el(editing()?"button":"span","heart-btn");hb.innerHTML=heartSVG(isLost);
-        if(editing()){hb.type="button";hb.dataset.team=n;hb.dataset.left=isLost?i+1:i;hb.title=isLost?"Herz zurückgeben":"Herz verloren";hb.setAttribute("aria-label","Team "+n+": "+hb.title);}
+        var isLost=i>=left,hb=el(heartEdit?"button":"span","heart-btn");hb.innerHTML=heartSVG(isLost);
+        if(heartEdit){hb.type="button";hb.dataset.team=n;hb.dataset.left=isLost?i+1:i;hb.title=isLost?"Herz zurückgeben":"Herz verloren";hb.setAttribute("aria-label","Team "+n+": "+hb.title);}
         hearts.appendChild(hb);
       }
       card.appendChild(hearts);
