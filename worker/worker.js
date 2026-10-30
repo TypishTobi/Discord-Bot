@@ -825,6 +825,70 @@ const EVENT_RE = /^(?:-# )?ev:([A-Za-z0-9_-]+)$/m;
 const EVENTS_SHOWN = 50;
 const EVENTS_KV_KEY = "events";
 const EVENTS_CACHE_SECONDS = 3; // kurz, damit neue Events schnell auf der Live-Seite erscheinen
+const MOD_STATE_KEY = "modstate"; // letzte bekannte Leben pro Spieler + bereits verarbeitete Events
+
+// Mod-Events automatisch auf die Website übertragen (Format des Mave-Loggers, Felder als Name = Wert):
+//   "Leben manuell geändert": Spieler, Neue Leben = N  -> jedes verlorene Leben kostet sein Team ein Herz,
+//                             ein zurückgegebenes Leben gibt es zurück. "Initialisierung" zählt nicht.
+//   Titel mit "getötet"/"kill" und Gegner (z. B. "Dummy getötet") -> Gegner bekommt +1 Kill.
+// Spieler werden über ihren Minecraft-Namen gefunden. Liefert eine Liste der Änderungen.
+async function applyModEvent(env, ev) {
+  const fields = {};
+  for (const f of ev.fields || []) fields[f.name.trim().toLowerCase()] = f.value.trim();
+  const spieler = fields["spieler"];
+  if (!spieler) return [];
+
+  const state = (await env.EVENTS_KV.get(MOD_STATE_KEY, "json")) || { lives: {}, seen: [] };
+  // Dasselbe Event nicht doppelt zählen (z. B. wenn die Mod es erneut schickt)
+  const key = [ev.title, spieler, fields["gegner"] || "", fields["zeitpunkt"] || ev.time, fields["neue leben"] || ""].join("|").toLowerCase();
+  if (state.seen.includes(key)) return [];
+  state.seen = [key, ...state.seen].slice(0, 300);
+
+  let heartDelta = 0;
+  const newLives = parseInt(fields["neue leben"], 10);
+  if (Number.isInteger(newLives)) {
+    const name = spieler.toLowerCase(), prev = state.lives[name];
+    state.lives[name] = newLives;
+    const init = /initialisierung/i.test(fields["geändert von"] || "");
+    if (prev !== undefined && !init) heartDelta = newLives - prev;
+  }
+  const killer = fields["gegner"] && /getötet|getoetet|kill/i.test(ev.title) ? fields["gegner"] : null;
+  await env.EVENTS_KV.put(MOD_STATE_KEY, JSON.stringify(state));
+  if (!heartDelta && !killer) return [];
+
+  const data = await buildMembers(env);
+  const players = data.roles.flatMap(r => r.members);
+  const byMc = name => players.find(p => p.minecraft && p.minecraft.toLowerCase() === String(name).toLowerCase());
+  const applied = [];
+
+  if (heartDelta) {
+    const p = byMc(spieler);
+    if (p && p.team) {
+      const team = data.teams.find(t => t.team === p.team);
+      const lost = Math.max(0, Math.min(MAX_HEARTS, (team ? team.heartsLost : 0) - heartDelta));
+      await discord(env, `/channels/${tierChannel(env)}/messages`, "POST", {
+        content: `Team ${p.team} → ${MAX_HEARTS - lost} von ${MAX_HEARTS} Herzen übrig ` +
+          `(automatisch: ${spieler} ${heartDelta < 0 ? "hat ein Leben verloren" : "hat ein Leben zurückbekommen"})\n` +
+          `-# team:${p.team}:${lost}`,
+        allowed_mentions: { parse: [] },
+      });
+      applied.push(`Team ${p.team}: ${MAX_HEARTS - lost} Herzen`);
+    }
+  }
+  if (killer) {
+    const p = byMc(killer);
+    if (p) {
+      const pdata = { team: p.team, kills: (p.kills || 0) + 1, description: p.description || "", youtube: p.youtube || "", tiktok: p.tiktok || "" };
+      const encoded = b64url(new TextEncoder().encode(JSON.stringify(pdata)));
+      await discord(env, `/channels/${tierChannel(env)}/messages`, "POST", {
+        content: `<@${p.id}> → ${pdata.kills} Kills (automatisch: ${ev.title}, Opfer ${spieler})\n-# pdata:${p.id}:${encoded}`,
+        allowed_mentions: { parse: [] },
+      });
+      applied.push(`${p.name}: ${pdata.kills} Kills`);
+    }
+  }
+  return applied;
+}
 
 async function hmacHex(secret, text) {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -900,7 +964,15 @@ async function eventReceive(request, env, ctx) {
       list.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ...ev });
       await env.EVENTS_KV.put(EVENTS_KV_KEY, JSON.stringify(list.slice(0, EVENTS_SHOWN)));
       ctx.waitUntil(caches.default.delete(new Request(new URL("/events.json", request.url).toString())));
-      return json({ ok: true });
+      // Herzen/Kills automatisch übernehmen; ein Fehler dabei soll das Event selbst nicht verlieren
+      let applied = [];
+      try {
+        applied = await applyModEvent(env, ev);
+        if (applied.length) ctx.waitUntil(caches.default.delete(new Request(new URL("/members.json", request.url).toString())));
+      } catch (err) {
+        console.error("Automatische Übernahme fehlgeschlagen:", err);
+      }
+      return json({ ok: true, applied });
     }
     // Discord erlaubt 2000 Zeichen pro Nachricht: notfalls Felder und Beschreibung kürzen
     const encode = () => b64url(new TextEncoder().encode(JSON.stringify(ev)));
