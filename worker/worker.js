@@ -42,7 +42,7 @@
 // Event-Empfänger für den Logger der Mod (Typ "HTTP-API"):
 // POST /api/events     nimmt Events an (Titel, Beschreibung, Felder – auch im Discord-Embed-Format),
 //                      geprüft mit EVENT_SECRET; speichert die letzten 50 in Cloudflare KV (EVENTS_KV)
-// GET  /events.json    die letzten Events für die Live-Seite (15 Sekunden zwischengespeichert)
+// GET  /events.json    die letzten Events für die Live-Seite (3 Sekunden zwischengespeichert)
 // POST /events/delete  { id } oder { all: true } löscht Events (nur Team, mit Sitzung)
 //   EVENTS_KV           KV-Namespace-Bindung (Settings -> Bindings) für die Events
 //   EVENT_CHANNEL_ID    Optional statt KV: eigener versteckter Discord-Kanal für Events
@@ -89,6 +89,9 @@ export default {
     if (request.method === "GET" && path === "/events.json") return eventsResponse(request, env, ctx);
     if (request.method === "POST" && path === "/events/delete") return eventDelete(request, env, ctx);
     if (request.method !== "POST") return new Response("Discord-Minecraft-Worker läuft.");
+    // Discord schickt Interaktionen an "/"; unbekannte Adressen bekommen eine klare Antwort
+    // (mit CORS, sonst meldet der Browser nur "Failed to fetch")
+    if (path !== "/") return withCors(json({ error: `Unbekannte Adresse ${path} – ist der neueste Worker-Code deployt?` }, 404));
 
     const body = await request.text();
     const valid = await verifySignature(
@@ -821,7 +824,7 @@ function fromB64url(text) {
 const EVENT_RE = /^(?:-# )?ev:([A-Za-z0-9_-]+)$/m;
 const EVENTS_SHOWN = 50;
 const EVENTS_KV_KEY = "events";
-const EVENTS_CACHE_SECONDS = 15;
+const EVENTS_CACHE_SECONDS = 3; // kurz, damit neue Events schnell auf der Live-Seite erscheinen
 
 async function hmacHex(secret, text) {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);

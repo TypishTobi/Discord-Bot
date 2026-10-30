@@ -603,6 +603,9 @@ button.chip{width:100%;font:inherit;text-align:left;cursor:pointer}
 .ev-fields dt{color:var(--ash)}
 .ev-fields dd{margin:0;color:var(--text);font-weight:600}
 .ev-rm{align-self:flex-start;margin-left:4px}
+.event.fresh{animation:ev-fresh 2.4s ease-out}
+@keyframes ev-fresh{0%{background:color-mix(in srgb,var(--ev) 30%,var(--deep));transform:translateY(-6px)}20%{transform:none}100%{background:var(--deep)}}
+@media (prefers-reduced-motion:reduce){.event.fresh{animation:none;box-shadow:0 0 0 2px var(--ev)}}
 .event-tools{margin:0 0 14px}
 .event-tools:empty{display:none}
 .event-tools .btn{padding:9px 16px;font-size:13px;border-color:rgba(255,107,107,.45)}

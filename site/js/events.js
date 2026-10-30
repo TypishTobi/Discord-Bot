@@ -1,13 +1,14 @@
 // Radius 2 – Live-Seite: Events aus der Mod (z. B. "Spieler hat ein Leben verloren").
-// Die Mod schickt sie an den Worker (POST /api/events), hier werden die letzten angezeigt
-// und alle 20 Sekunden aktualisiert. Das Team kann nach dem Login (/login, siehe live.js)
+// Die Mod schickt sie an den Worker (POST /api/events), hier werden die letzten angezeigt.
+// Die Seite fragt alle 5 Sekunden nach neuen Events (und sofort, wenn man zum Tab zurückkehrt);
+// neue Events werden kurz hervorgehoben. Das Team kann nach dem Login (/login, siehe live.js)
 // einzelne oder alle Events löschen.
 (function(){
-  var WORKER="https://mc-namen.typischtobi66.workers.dev";
+  var WORKER="https://mc-namen.typischtobi66.workers.dev",POLL_MS=5000;
   var feed=document.getElementById("event-feed"),status=document.getElementById("event-status");
   var tools=document.getElementById("event-tools"),msg=document.getElementById("team-msg");
   if(!feed)return;
-  var shown="",session=null,last={events:[]};
+  var shown="",session=null,last={events:[]},known=null;
 
   function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
   function say(text,bad){if(!msg)return;msg.textContent=text||"";msg.classList.toggle("bad",!!bad);}
@@ -36,9 +37,12 @@
     renderTools(events.length);
     if(key===shown&&!force){[].forEach.call(feed.querySelectorAll("time"),function(t){t.textContent=when(t.dateTime);});return;}
     shown=key;feed.textContent="";
-    if(!events.length){feed.appendChild(el("p","note","Noch keine Events. Sobald auf dem Server etwas passiert, erscheint es hier."));return;}
+    // Beim ersten Laden ist nichts "neu"; danach wird jedes unbekannte Event hervorgehoben
+    var isNew=function(id){return known&&!known[id];};
+    var seen={};events.forEach(function(e){seen[e.id]=1;});
+    if(!events.length){feed.appendChild(el("p","note","Noch keine Events. Sobald auf dem Server etwas passiert, erscheint es hier."));known=seen;return;}
     events.forEach(function(ev){
-      var k=kind(ev),item=el("article","event ev-"+k[0]);
+      var k=kind(ev),item=el("article","event ev-"+k[0]+(isNew(ev.id)?" fresh":""));
       if(ev.color!=null)item.style.setProperty("--ev",("#"+Number(ev.color).toString(16).padStart(6,"0")));
       item.appendChild(el("span","ev-icon",k[1]));
       var body=el("div","ev-body"),head=el("div","ev-head");
@@ -56,6 +60,7 @@
       if(session){var rm=el("button","team-rm ev-rm","×");rm.type="button";rm.dataset.delete=ev.id;rm.title="Event löschen";rm.setAttribute("aria-label","Event „"+ev.title+"“ löschen");item.appendChild(rm);}
       feed.appendChild(item);
     });
+    known=seen;
   }
   function renderTools(count){
     if(!tools)return;
@@ -74,7 +79,7 @@
         render({events:rest,configured:last.configured},true);
         say(d.removed===1?"Event gelöscht.":d.removed+" Events gelöscht.");
       })
-      .catch(function(e){say(e.message||"Löschen fehlgeschlagen.",true);});
+      .catch(function(e){say(/fetch/i.test(e.message)?"Löschen fehlgeschlagen: Der Worker antwortet nicht richtig – ist der neueste Worker-Code deployt?":e.message||"Löschen fehlgeschlagen.",true);});
   }
   feed.addEventListener("click",function(e){
     var b=e.target.closest("[data-delete]");if(b&&session)remove({id:b.dataset.delete});
@@ -87,8 +92,9 @@
     fetch(WORKER+"/events.json",{cache:"no-store"})
       .then(function(r){if(!r.ok)throw new Error(r.status);return r.json();})
       .then(function(d){render(d);})
-      .catch(function(){status.textContent="Events konnten gerade nicht geladen werden. Neuer Versuch in 20 Sekunden.";});
+      .catch(function(){status.textContent="Events konnten gerade nicht geladen werden. Neuer Versuch in wenigen Sekunden.";});
   }
   load();
-  setInterval(function(){if(!document.hidden)load();},20000);
+  setInterval(function(){if(!document.hidden)load();},POLL_MS);
+  document.addEventListener("visibilitychange",function(){if(!document.hidden)load();});
 })();
