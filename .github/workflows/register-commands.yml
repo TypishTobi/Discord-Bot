@@ -1,0 +1,19 @@
+name: Slash-Befehle registrieren
+
+# Manuell starten, nachdem sich die Befehle in scripts/register_commands.py geändert haben.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Befehle registrieren
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          GUILD_ID: ${{ vars.GUILD_ID }}
+        run: python3 scripts/register_commands.py

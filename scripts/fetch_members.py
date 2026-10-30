@@ -57,8 +57,9 @@ def fetch_all_members(guild_id, token):
         after = batch[-1]["user"]["id"]
 
 
-# Steht allein ("mc:…") oder als kleine Zeile "-# mc:…" unter dem Ping
-MC_RE = re.compile(r"^(?:-# )?mc:(\d+):(\w{3,16}):([0-9a-f]{32})$", re.M)
+# Steht allein ("mc:…") oder als kleine Zeile "-# mc:…" unter dem Ping;
+# "mcdel:<id>" bedeutet, dass das Team den Eintrag entfernt hat
+MC_RE = re.compile(r"^(?:-# )?(?:mc:(\d+):(\w{3,16}):([0-9a-f]{32})|mcdel:(\d+))$", re.M)
 
 
 def fetch_minecraft_names(channel_id, token):
@@ -73,10 +74,13 @@ def fetch_minecraft_names(channel_id, token):
             if msg["author"]["id"] != bot_id:
                 continue
             match = MC_RE.search(msg.get("content", ""))
-            if match and match.group(1) not in names:
-                names[match.group(1)] = {"name": match.group(2), "uuid": match.group(3)}
+            if not match:
+                continue
+            user_id = match.group(1) or match.group(4)
+            if user_id not in names:
+                names[user_id] = {"name": match.group(2), "uuid": match.group(3)} if match.group(1) else None
         if len(batch) < 100:
-            return names
+            return {uid: entry for uid, entry in names.items() if entry}
         before = batch[-1]["id"]
 
 
