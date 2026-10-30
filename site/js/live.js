@@ -7,6 +7,7 @@
   var DEFAULT_TIERS=["S+","S","A+","A","B+","B","C+","C","D"];
   var SESSION_KEY="radius2-session",MAX_DESCRIPTION=200;
   var board=document.getElementById("tier-board"),grid=document.getElementById("player-grid"),teamsGrid=document.getElementById("teams-grid");
+  var creatorGrid=document.getElementById("creator-grid"),creatorAdd=document.getElementById("creator-add");
   var authBox=document.getElementById("team-auth"),msg=document.getElementById("team-msg");
   var players=[],teams=[],tiers=DEFAULT_TIERS,teamCount=12,maxHearts=4,session=null,me=null,selected=null,editId=null;
 
@@ -33,7 +34,7 @@
       if(grid)grid.innerHTML='<p class="note">Die Spieler konnten gerade nicht geladen werden.</p>';
     });
   }
-  function rerender(){renderBoard();renderPlayers();renderTeams();}
+  function rerender(){renderBoard();renderPlayers();renderTeams();renderCreators();}
   function teamLost(n){var t=teams.filter(function(x){return x.team===n;})[0];return t?Math.min(t.heartsLost||0,maxHearts):0;}
 
   // ---- Team: alle mit Rang im Discord-Namen ("Admin | Mrtx"), gruppiert nach Rang ----
@@ -240,12 +241,14 @@
     var desc=el("textarea");desc.maxLength=MAX_DESCRIPTION;desc.rows=3;desc.value=p.description||"";
     var count=el("small","pcount");function upd(){count.textContent=desc.value.length+"/"+MAX_DESCRIPTION;}desc.oninput=upd;upd();
     field("Kurze Beschreibung",desc).parentNode.appendChild(count);
+    var yt=el("input");yt.type="text";yt.value=p.youtube||"";yt.placeholder="youtube.com/@name oder @name";yt.maxLength=200;
+    field("YouTube-Kanal (macht den Spieler zum Creator)",yt);
     var row=el("div","pactions"),save=el("button","btn dc","Speichern"),cancel=el("button","btn ghost","Abbrechen");
     save.type="submit";cancel.type="button";cancel.onclick=function(){editId=null;renderPlayers();};
     row.appendChild(save);row.appendChild(cancel);f.appendChild(row);
     f.onsubmit=function(e){
       e.preventDefault();
-      savePlayer(p,{team:team.value?Number(team.value):null,kills:Number(kills.value),description:desc.value.trim()});
+      savePlayer(p,{team:team.value?Number(team.value):null,kills:Number(kills.value),description:desc.value.trim(),youtube:yt.value.trim()});
     };
     return f;
   }
@@ -264,7 +267,7 @@
   function savePlayer(p,data){
     say("Speichere …");
     post("/player",Object.assign({player:p.id},data))
-      .then(function(d){p.team=d.team;p.kills=d.kills;p.description=d.description;editId=null;renderPlayers();say((p.name||p.displayName)+" gespeichert.");})
+      .then(function(d){p.team=d.team;p.kills=d.kills;p.description=d.description;p.youtube=d.youtube||"";editId=null;renderPlayers();say((p.name||p.displayName)+" gespeichert.");})
       .catch(function(e){say(e.message||"Speichern fehlgeschlagen.",true);if(e.status===401||e.status===403)logout(true);});
   }
   if(grid){
@@ -338,9 +341,62 @@
     var p=players.filter(function(x){return x.id===id;})[0];if(!p||p.team===team)return;
     if(team&&teamMembers(team).length>=4){say("Team "+team+" ist schon voll (4 Spieler).",true);renderTeams();return;}
     var before=p.team;p.team=team;rerender();say("Speichere …");
-    post("/player",{player:p.id,team:team,kills:p.kills||0,description:p.description||""})
+    post("/player",{player:p.id,team:team,kills:p.kills||0,description:p.description||"",youtube:p.youtube||""})
       .then(function(){say((p.name||p.displayName)+(team?" ist jetzt in Team "+team+".":" hat jetzt kein Team mehr."));})
       .catch(function(e){p.team=before;rerender();say(e.message||"Speichern fehlgeschlagen.",true);if(e.status===401||e.status===403)logout(true);});
+  }
+
+  // ---- Creator-Seite: alle Spieler mit verbundenem YouTube-Kanal ----
+  var YT_ICON='<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>';
+  function ytLabel(url){var m=/youtube\.com\/(@[\w.-]+)/.exec(url||"");return m?m[1]:"YouTube-Kanal";}
+  function renderCreators(){
+    if(!creatorGrid)return;
+    var list=players.filter(function(p){return p.youtube;}).sort(byName);
+    creatorGrid.textContent="";
+    if(!list.length)creatorGrid.appendChild(el("p","note","Noch keine Creator eingetragen."));
+    list.forEach(function(p){
+      var name=p.name||p.displayName,item=el("div","creator-item"),a=el("a","chip");
+      a.href=p.youtube;a.target="_blank";a.rel="noopener";a.setAttribute("aria-label",name+" auf YouTube ansehen");
+      a.appendChild(headImg(p,44));
+      var txt=el("span","chip-name");txt.appendChild(el("span",null,name));txt.appendChild(el("small",null,ytLabel(p.youtube)));
+      a.appendChild(txt);a.insertAdjacentHTML("beforeend",'<span class="chip-yt">'+YT_ICON+'</span>');
+      item.appendChild(a);
+      if(editing()){var rm=el("button","team-rm creator-rm","×");rm.type="button";rm.dataset.uncreator=p.id;rm.title=name+" als Creator entfernen";rm.setAttribute("aria-label",rm.title);item.appendChild(rm);}
+      creatorGrid.appendChild(item);
+    });
+    renderCreatorAdd();
+  }
+  // Team-Login: Spieler vom Server mit einem YouTube-Kanal verbinden
+  function renderCreatorAdd(){
+    if(!creatorAdd)return;
+    creatorAdd.textContent="";
+    if(!editing())return;
+    var form=el("form","creator-form"),who=el("select"),url=el("input"),go=el("button","btn dc","Als Creator verbinden");
+    who.setAttribute("aria-label","Spieler");url.setAttribute("aria-label","YouTube-Kanal");
+    var none=el("option",null,"Spieler wählen …");none.value="";who.appendChild(none);
+    players.filter(function(p){return !p.youtube;}).sort(byName).forEach(function(p){var o=el("option",null,p.name||p.displayName);o.value=p.id;who.appendChild(o);});
+    url.type="text";url.placeholder="youtube.com/@name oder @name";url.maxLength=200;go.type="submit";
+    form.appendChild(who);form.appendChild(url);form.appendChild(go);
+    form.onsubmit=function(e){
+      e.preventDefault();
+      if(!who.value){say("Bitte zuerst einen Spieler wählen.",true);return;}
+      if(!url.value.trim()){say("Bitte den YouTube-Kanal eintragen.",true);url.focus();return;}
+      setYoutube(who.value,url.value.trim());
+    };
+    creatorAdd.appendChild(form);
+  }
+  function setYoutube(id,url){
+    var p=players.filter(function(x){return x.id===id;})[0];if(!p)return;
+    say("Speichere …");
+    post("/player",{player:p.id,team:p.team||null,kills:p.kills||0,description:p.description||"",youtube:url})
+      .then(function(d){p.youtube=d.youtube||"";rerender();say((p.name||p.displayName)+(p.youtube?" ist jetzt als Creator verbunden.":" ist kein Creator mehr."));})
+      .catch(function(e){say(e.message||"Speichern fehlgeschlagen.",true);if(e.status===401||e.status===403)logout(true);});
+  }
+  if(creatorGrid){
+    creatorGrid.addEventListener("click",function(e){
+      var rm=e.target.closest("[data-uncreator]");if(!rm||!editing())return;
+      e.preventDefault();setYoutube(rm.dataset.uncreator,"");
+    });
   }
 
   // ---- Team-Statistik (Fenster beim Klick auf ein Team) ----
@@ -479,5 +535,5 @@
   session=read(SESSION_KEY);
 
   renderAuth();
-  load().then(function(){if(!board&&!grid&&!teamsGrid)return;return linkCode?redeem(linkCode):checkSession();});
+  load().then(function(){if(!board&&!grid&&!teamsGrid&&!creatorGrid)return;return linkCode?redeem(linkCode):checkSession();});
 })();

@@ -512,6 +512,19 @@ footer .btn{padding:9px 18px;font-size:15px}
 .team-add:focus{outline:2px solid var(--bolt);outline-offset:1px}
 .gen-tag{font-style:normal;font-family:var(--f-body);font-size:11px;font-weight:700;color:#08111f;background:var(--ice);border-radius:4px;padding:1px 6px;margin-left:8px;vertical-align:middle;text-transform:uppercase;letter-spacing:.04em}
 
+/* Creator live */
+#creator-grid{margin-top:8px}
+.creator-item{position:relative;min-width:0}
+.creator-item .chip{height:100%}
+.creator-item .chip .mc-head{width:44px;height:44px;border-radius:8px}
+.chip-name small{display:block;font-size:13px;font-weight:500;color:var(--soft)}
+.creator-rm{position:absolute;top:-8px;right:-8px;background:var(--panel);z-index:1}
+.creator-form{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 22px;padding:16px;background:var(--deep);border:1px dashed rgba(98,220,255,.45);border-radius:12px}
+.creator-form select,.creator-form input{font:500 15px var(--f-body);color:var(--text);background:var(--night);border:1px solid #2e3540;border-radius:0;padding:10px 12px}
+.creator-form input{flex:1;min-width:220px}
+.creator-form select:focus,.creator-form input:focus{outline:2px solid var(--bolt);outline-offset:1px}
+.creator-form .btn{padding:10px 18px;font-size:14px}
+
 /* Team-Statistik */
 .team-dialog{width:min(560px,calc(100% - 32px));max-height:calc(100% - 48px);overflow:auto;padding:24px;color:var(--text);background:linear-gradient(160deg,var(--panel),var(--deep));border:1px solid rgba(98,220,255,.35);border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
 .team-dialog::backdrop{background:rgba(3,8,18,.72);backdrop-filter:blur(4px)}

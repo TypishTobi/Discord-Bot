@@ -32,7 +32,7 @@
 // POST /tierlist       { tier, order: [ids], moved } speichert ein Tier samt Reihenfolge
 //                      (nur Team ab MIN_ROLE_ID); { player, tier: null } entfernt aus der Tierlist.
 //                      Als Zeilen "tier:<discordId>:<tier>:<platz>" im Tier-Kanal, neueste gilt
-// POST /player         { player, team, kills, description } speichert Spielerdaten;
+// POST /player         { player, team, kills, description, youtube } speichert Spielerdaten;
 //                      als "pdata:<discordId>:<base64url(JSON)>" im Tier-Kanal, neueste gilt
 // POST /team           { team, heartsLost } speichert die verlorenen Team-Herzen (gemeinsam
 //                      fürs ganze Team); als "team:<nummer>:<verloren>" im Tier-Kanal
@@ -380,6 +380,7 @@ async function buildMembers(env) {
           team: playerData.get(m.user.id)?.team ?? null,
           kills: playerData.get(m.user.id)?.kills ?? 0,
           description: playerData.get(m.user.id)?.description ?? "",
+          youtube: playerData.get(m.user.id)?.youtube ?? "", // gesetzt = wird als Creator angezeigt
         };
       });
     // Höchster Rang zuerst, Leute ohne Rang ganz unten, innerhalb eines Rangs alphabetisch
@@ -641,12 +642,13 @@ async function participantIds(env) {
   return new Set(members.filter(m => m.roles.some(id => roleIds.includes(id))).map(m => m.user.id));
 }
 
-// Spielerdaten: Team, Kills, Beschreibung (als JSON in base64url)
+// Spielerdaten: Team, Kills, Beschreibung, YouTube-Kanal (als JSON in base64url)
 async function playerSave(request, env, ctx) {
   return teamWrite(request, env, ctx, (body, player, session) => {
     const data = cleanPlayerData(body);
     if (data.error) return data;
-    const summary = `${data.team ? "Team " + data.team : "kein Team"} · ${data.kills} Kills`;
+    const summary = `${data.team ? "Team " + data.team : "kein Team"} · ${data.kills} Kills` +
+      (data.youtube ? ` · YouTube ${data.youtube.replace("https://www.youtube.com/", "")}` : "");
     const encoded = b64url(new TextEncoder().encode(JSON.stringify(data)));
     return {
       content: `<@${player}> → ${summary} (von <@${session.uid}>)\n-# pdata:${player}:${encoded}`,
@@ -668,7 +670,28 @@ function cleanPlayerData(body) {
   if (kills === null) return { error: "Kills: eine Zahl von 0 bis 9999." };
   const description = String(body.description ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
   if (description.length > MAX_DESCRIPTION) return { error: `Beschreibung: höchstens ${MAX_DESCRIPTION} Zeichen.` };
-  return { team, kills, description };
+  const youtube = cleanYoutube(body.youtube);
+  if (youtube === null) {
+    return { error: "YouTube-Link ungültig. Erlaubt: youtube.com/@name, youtube.com/channel/… oder einfach @name." };
+  }
+  return { team, kills, description, youtube };
+}
+
+// Nur echte YouTube-Kanäle; liefert eine einheitliche Adresse, "" für leer oder null für ungültig
+function cleanYoutube(value) {
+  let text = String(value ?? "").trim();
+  if (!text) return "";
+  if (/^@[\w.-]{3,30}$/.test(text)) text = "https://www.youtube.com/" + text;
+  let url;
+  try {
+    url = new URL(/^https?:\/\//i.test(text) ? text : "https://" + text);
+  } catch {
+    return null;
+  }
+  if (url.hostname.replace(/^(www\.|m\.)/, "") !== "youtube.com") return null;
+  const path = url.pathname.replace(/\/$/, "");
+  if (!/^\/(@[\w.-]{3,30}|channel\/UC[\w-]{22}|c\/[\w.-]{1,100}|user\/[\w.-]{1,100})$/.test(path)) return null;
+  return "https://www.youtube.com" + path;
 }
 
 // Team-Herzen: jedes Team hat MAX_HEARTS gemeinsame Herzen
