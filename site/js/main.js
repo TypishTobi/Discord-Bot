@@ -115,9 +115,16 @@
   }
 
   // Navigation wird fest, sobald der Hero verlassen wird
-  var nav=document.getElementById("nav");
-  function navState(){nav.classList.toggle("solid",window.scrollY>60);}
+  var nav=document.getElementById("nav"),navToggle=document.getElementById("nav-toggle");
+  function navState(){nav.classList.toggle("solid",window.scrollY>24||nav.classList.contains("is-open"));}
   window.addEventListener("scroll",navState,{passive:true});navState();
+  // Menü-Knopf auf dem Handy: Links als Ausklapp-Liste
+  function setMenu(open){nav.classList.toggle("is-open",open);if(navToggle)navToggle.setAttribute("aria-expanded",open?"true":"false");navState();}
+  if(navToggle){
+    navToggle.addEventListener("click",function(){setMenu(!nav.classList.contains("is-open"));});
+    nav.addEventListener("click",function(e){if(e.target.closest(".nav-links a"))setMenu(false);});
+    document.addEventListener("keydown",function(e){if(e.key==="Escape"&&nav.classList.contains("is-open")){setMenu(false);navToggle.focus();}});
+  }
 
   // Countdown bis 20.11.2026 18:00 (Europe/Berlin = UTC+1)
   var target=Date.parse("2026-11-20T18:00:00+01:00");
