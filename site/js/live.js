@@ -28,6 +28,7 @@
   }
   // quiet: Hintergrund-Aktualisierung; bei einem Fehler bleibt die bisherige Anzeige stehen
   var CACHE_KEY="radius2-members",shown=false;
+  var usesMembers=!!(board||grid||teamsGrid||creatorGrid||document.getElementById("socials-grid")||document.getElementById("event-feed"));
   function apply(data){
     var seen={};players=[];
     (data.roles||[]).forEach(function(role){(role.members||[]).forEach(function(m){if(!seen[m.id]){seen[m.id]=1;players.push(m);}});});
@@ -40,6 +41,7 @@
     shown=true;renderRoster();rerender();
   }
   function load(quiet){
+    if(!usesMembers)return Promise.resolve(); // z. B. Regeln-Seite: braucht nur den Login
     // Beim Öffnen sofort den zuletzt gesehenen Stand zeigen; der frische kommt gleich danach
     if(!quiet&&!shown){try{var old=JSON.parse(read(CACHE_KEY)||"null");if(old&&old.roles)apply(old);}catch(e){}}
     var source=getJSON(WORKER+"/members.json");
@@ -63,7 +65,7 @@
   }
   setInterval(function(){if(!document.hidden&&!busy())load(true);},REFRESH_MS);
   document.addEventListener("visibilitychange",function(){if(!document.hidden&&!busy())load(true);});
-  function rerender(){renderBoard();renderPlayers();renderTeams();renderCreators();renderSocials();}
+  function rerender(){renderBoard();renderPlayers();renderTeams();renderCreators();renderSocials();renderRules();}
   function teamLost(n){var t=teams.filter(function(x){return x.team===n;})[0];return t?Math.min(t.heartsLost||0,maxHearts):0;}
 
   // ---- Team: alle mit Rang im Discord-Namen ("Admin | Mrtx"), gruppiert nach Rang ----
@@ -659,6 +661,75 @@
     });
   }
 
+  // ---- Regeln (regeln.html): das Team kann bearbeiten, löschen, verschieben und neue anlegen ----
+  // Solange nie gespeichert wurde, bleiben die Regeln aus dem HTML stehen
+  var rulesList=document.getElementById("rules-list"),rules=null,ruleEdit=null;
+  if(rulesList){
+    rules=[].map.call(rulesList.querySelectorAll(".rule"),function(li){
+      var h=li.querySelector("h3"),t=li.querySelector("p");return {title:h?h.textContent.trim():"",text:t?t.textContent.trim():""};
+    });
+    getJSON(WORKER+"/rules.json").then(function(d){if(d&&Array.isArray(d.rules)&&ruleEdit==null){rules=d.rules;renderRules();}}).catch(function(){});
+  }
+  function saveRules(next,done){
+    say("Speichere …");
+    post("/rules",{rules:next})
+      .then(function(d){rules=d.rules;ruleEdit=null;editId=null;renderRules();say(done||"Regeln gespeichert.");})
+      .catch(function(e){say(e.message||"Speichern fehlgeschlagen.",true);if(e.status===401||e.status===403)logout(true);});
+  }
+  function ruleForm(i){
+    var r=i<rules.length?rules[i]:{title:"",text:""},li=el("li","rule rule-editing"),form=el("form","rule-form");
+    var f1=el("label","pfield"),title=el("input");f1.appendChild(el("span",null,"Überschrift"));
+    title.value=r.title;title.maxLength=80;title.required=true;f1.appendChild(title);
+    var f2=el("label","pfield"),text=el("textarea");f2.appendChild(el("span",null,"Regeltext"));
+    text.value=r.text;text.maxLength=800;text.rows=4;f2.appendChild(text);
+    var row=el("div","rule-actions"),ok=el("button","btn","Speichern"),cancel=el("button","btn ghost","Abbrechen");
+    ok.type="submit";cancel.type="button";
+    cancel.onclick=function(){ruleEdit=null;editId=null;renderRules();say("");};
+    row.appendChild(ok);row.appendChild(cancel);
+    form.appendChild(f1);form.appendChild(f2);form.appendChild(row);
+    form.onsubmit=function(e){
+      e.preventDefault();
+      var t=title.value.trim();if(!t){title.focus();say("Bitte eine Überschrift eingeben.",true);return;}
+      var next=rules.slice(),item={title:t,text:text.value.trim()};
+      if(i<rules.length)next[i]=item;else next.push(item);
+      saveRules(next,i<rules.length?"Regel gespeichert.":"Neue Regel hinzugefügt.");
+    };
+    li.appendChild(form);
+    setTimeout(function(){title.focus();},0);
+    return li;
+  }
+  function renderRules(){
+    if(!rulesList)return;
+    rulesList.textContent="";
+    var edit=editing();
+    if(!edit&&ruleEdit!=null){ruleEdit=null;editId=null;}
+    rules.forEach(function(r,i){
+      if(edit&&ruleEdit===i){rulesList.appendChild(ruleForm(i));return;}
+      var li=el("li","rule");li.appendChild(el("h3",null,r.title));
+      if(r.text)li.appendChild(el("p","rule-text",r.text));
+      if(edit){
+        var bar=el("div","rule-tools");
+        var tool=function(label,aria,fn,disabled){var b=el("button","rule-tool",label);b.type="button";b.setAttribute("aria-label",aria);b.title=aria;b.disabled=!!disabled;b.onclick=fn;bar.appendChild(b);return b;};
+        tool("Bearbeiten","Regel „"+r.title+"“ bearbeiten",function(){ruleEdit=i;editId="rule";renderRules();});
+        tool("↑","Nach oben verschieben",function(){var n=rules.slice();n.splice(i-1,0,n.splice(i,1)[0]);saveRules(n,"Reihenfolge gespeichert.");},i===0);
+        tool("↓","Nach unten verschieben",function(){var n=rules.slice();n.splice(i+1,0,n.splice(i,1)[0]);saveRules(n,"Reihenfolge gespeichert.");},i===rules.length-1);
+        tool("Löschen","Regel „"+r.title+"“ löschen",function(){
+          if(!confirm("Regel „"+r.title+"“ wirklich löschen?"))return;
+          var n=rules.slice();n.splice(i,1);saveRules(n,"Regel gelöscht.");
+        }).classList.add("danger");
+        li.appendChild(bar);
+      }
+      rulesList.appendChild(li);
+    });
+    if(!edit)return;
+    if(ruleEdit===rules.length)rulesList.appendChild(ruleForm(rules.length));
+    else{
+      var add=el("li","rule rule-add"),b=el("button","rule-add-btn","+ Neue Regel");b.type="button";
+      b.onclick=function(){ruleEdit=rules.length;editId="rule";renderRules();};
+      add.appendChild(b);rulesList.appendChild(add);
+    }
+  }
+
   // ---- Discord-Login fürs Team ----
   function renderAuth(){
     // Andere Skripte (z. B. events.js auf der Live-Seite) erfahren so, ob das Team angemeldet ist
@@ -684,7 +755,7 @@
     say("Prüfe Code …");
     return fetch(WORKER+"/auth/code",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code:code})})
       .then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||"Anmeldung fehlgeschlagen.");return d;});})
-      .then(function(d){session=d.session;store(SESSION_KEY,session);me={name:d.name};renderAuth();rerender();say(board?"Angemeldet. Du kannst die Spieler jetzt einstufen.":"Angemeldet. Du kannst die Spieler jetzt bearbeiten.");})
+      .then(function(d){session=d.session;store(SESSION_KEY,session);me={name:d.name};renderAuth();rerender();say(board?"Angemeldet. Du kannst die Spieler jetzt einstufen.":rulesList?"Angemeldet. Du kannst die Regeln jetzt bearbeiten.":"Angemeldet. Du kannst die Spieler jetzt bearbeiten.");})
       .catch(function(e){say(e.message,true);});
   }
   function logout(expired){
@@ -705,5 +776,5 @@
   session=read(SESSION_KEY);
 
   renderAuth();
-  load().then(function(){if(!board&&!grid&&!teamsGrid&&!creatorGrid&&!socialsGrid&&!document.getElementById("event-feed"))return;return linkCode?redeem(linkCode):checkSession();});
+  load().then(function(){if(!usesMembers&&!rulesList)return;return linkCode?redeem(linkCode):checkSession();});
 })();

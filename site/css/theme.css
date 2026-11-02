@@ -355,3 +355,19 @@ img{max-width:100%}
   box-shadow:var(--bevel),0 2px 8px rgba(0,0,0,.5);z-index:1}
 .tchip-info:hover,.tchip-info:focus-visible{filter:brightness(1.12);outline:2px solid var(--bolt);outline-offset:1px}
 @media (pointer:coarse){.tchip-info{width:28px;height:28px;line-height:28px;top:-9px;right:-9px}}
+/* Regeln bearbeiten (nur Team) */
+.rule-text{white-space:pre-line}
+.rule-tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:8px;border-top:1px solid var(--edge)}
+.rule-tool{font:600 13px var(--f-body);color:var(--frost);background:rgba(255,255,255,.05);border:1px solid var(--edge-strong);border-radius:6px;padding:7px 10px;min-height:34px;cursor:pointer}
+.rule-tool:hover:not(:disabled){border-color:var(--ice);color:var(--ice)}
+.rule-tool:disabled{opacity:.35;cursor:default}
+.rule-tool.danger{margin-left:auto;color:#ff9aa8;border-color:rgba(255,120,140,.35)}
+.rule-tool.danger:hover{color:#fff;background:rgba(255,80,100,.25);border-color:#ff7a8c}
+.rule-add{align-items:stretch;justify-content:center;padding:0;background:none;border:1px dashed var(--edge-strong);box-shadow:none}
+.rule-add-btn{flex:1;min-height:120px;font:800 24px var(--f-display);text-transform:uppercase;letter-spacing:.02em;color:var(--ice);background:none;border:0;border-radius:14px;cursor:pointer}
+.rule-add-btn:hover{background:rgba(111,216,247,.06)}
+.rule-editing{border-color:var(--ice)}
+.rule-form{display:flex;flex-direction:column;gap:12px}
+.rule-form input,.rule-form textarea{width:100%;box-sizing:border-box}
+.rule-actions{display:flex;flex-wrap:wrap;gap:8px}
+.rule-actions .btn{padding:11px 16px;font-size:14px}

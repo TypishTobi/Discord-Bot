@@ -38,6 +38,9 @@
 //                      fürs ganze Team); als "team:<nummer>:<verloren>" im Tier-Kanal
 // POST /links          { youtube, tiktok, discord, instagram, twitch, x } speichert die offiziellen
 //                      Kanäle von Radius 2; als "links:<base64url(JSON)>" im Tier-Kanal
+// GET  /rules.json     Regeln für regeln.html ({ rules: null }, solange nie gespeichert)
+// POST /rules          { rules: [{ title, text }] } ersetzt alle Regeln (nur Team ab MIN_ROLE_ID);
+//                      liegen in Cloudflare KV (EVENTS_KV, Schlüssel "rules")
 //
 // Event-Empfänger für den Logger der Mod (Typ "HTTP-API"):
 // POST /api/events     nimmt Events an (Titel, Beschreibung, Felder – auch im Discord-Embed-Format),
@@ -85,6 +88,8 @@ export default {
     if (request.method === "POST" && path === "/player") return playerSave(request, env, ctx);
     if (request.method === "POST" && path === "/team") return teamSave(request, env, ctx);
     if (request.method === "POST" && path === "/links") return linksSave(request, env, ctx);
+    if (request.method === "GET" && path === "/rules.json") return rulesResponse(env);
+    if (request.method === "POST" && path === "/rules") return rulesSave(request, env);
     if (request.method === "POST" && path === "/api/events") return eventReceive(request, env, ctx);
     if (request.method === "GET" && path === "/events.json") return eventsResponse(request, env, ctx);
     if (request.method === "POST" && path === "/events/delete") return eventDelete(request, env, ctx);
@@ -1238,6 +1243,44 @@ async function eventReceive(request, env, ctx) {
   } catch (err) {
     console.error(err);
     return json({ error: "Speichern fehlgeschlagen: " + String(err.message).slice(0, 150) }, 502);
+  }
+}
+
+// --- Regeln (regeln.html) ---------------------------------------------------
+
+const RULES_KV_KEY = "rules", MAX_RULES = 40, MAX_RULE_TITLE = 80, MAX_RULE_TEXT = 800;
+
+async function rulesResponse(env) {
+  const rules = env.EVENTS_KV ? await env.EVENTS_KV.get(RULES_KV_KEY, "json") : null;
+  return withCors(new Response(JSON.stringify({ rules: Array.isArray(rules) ? rules : null }), {
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+  }));
+}
+
+// Die Website schickt immer die komplette Liste (bearbeiten, löschen, neu, verschieben)
+async function rulesSave(request, env) {
+  try {
+    const session = await sessionFrom(request, env);
+    if (!session) return withCors(json({ error: "Bitte neu anmelden." }, 401));
+    if (!(await isTeamUser(env, session.uid))) return withCors(json({ error: "Nur das Team darf Regeln ändern." }, 403));
+    if (!env.EVENTS_KV) return withCors(json({ error: "Speicher fehlt: KV-Binding EVENTS_KV ist nicht eingerichtet." }, 500));
+    const body = await request.json().catch(() => ({}));
+    if (!Array.isArray(body.rules)) return withCors(json({ error: "Ungültige Angaben." }, 400));
+    if (body.rules.length > MAX_RULES) return withCors(json({ error: `Höchstens ${MAX_RULES} Regeln.` }, 400));
+    const rules = [];
+    for (const r of body.rules) {
+      const title = String(r?.title ?? "").replace(/\s+/g, " ").trim();
+      const text = String(r?.text ?? "").replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+      if (!title) return withCors(json({ error: "Jede Regel braucht eine Überschrift." }, 400));
+      if (title.length > MAX_RULE_TITLE) return withCors(json({ error: `Überschrift höchstens ${MAX_RULE_TITLE} Zeichen.` }, 400));
+      if (text.length > MAX_RULE_TEXT) return withCors(json({ error: `Regeltext höchstens ${MAX_RULE_TEXT} Zeichen.` }, 400));
+      rules.push({ title, text });
+    }
+    await env.EVENTS_KV.put(RULES_KV_KEY, JSON.stringify(rules));
+    return withCors(json({ ok: true, rules }));
+  } catch (err) {
+    console.error(err);
+    return withCors(json({ error: "Speichern fehlgeschlagen: " + String(err.message).slice(0, 150) }, 502));
   }
 }
 

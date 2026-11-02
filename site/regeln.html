@@ -9,7 +9,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="assets/icon-32.png">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
 <link rel="stylesheet" href="css/style.css?v=26">
-<link rel="stylesheet" href="css/theme.css?v=6">
+<link rel="stylesheet" href="css/theme.css?v=7">
 </head>
 <body class="subpage">
 <nav class="nav" id="nav" aria-label="Hauptnavigation">
@@ -36,8 +36,14 @@
 <main class="wrap">
 
   <section id="regeln">
-    <h2>So wird gespielt</h2>
-    <ul class="rules">
+    <div class="tier-head">
+      <div>
+        <h2>So wird gespielt</h2>
+      </div>
+      <div class="tier-auth" id="team-auth"></div>
+    </div>
+    <p class="tier-msg" id="team-msg" role="status" aria-live="polite"></p>
+    <ul class="rules" id="rules-list">
       <li class="rule"><h3>4 Team-Herzen</h3><p>Jedes Team startet mit vier gemeinsamen Herzen. Herzen gehen nur im Combat verloren, nirgendwo sonst.</p></li>
       <li class="rule"><h3>Kein Verrat, kein Wechsel</h3><p>Wer in einem Team steht, bleibt dort. Teams werden nicht gewechselt und nicht hintergangen.</p></li>
       <li class="rule"><h3>Teams per Tierlist</h3><p>12 Teams mit je 4 Spielern, also 48 Spieler. Die Einteilung entsteht über eine Tierlist.</p></li>
@@ -59,5 +65,6 @@
 
 <script src="js/data.js?v=26"></script>
 <script src="js/main.js?v=26"></script>
+<script src="js/live.js?v=32"></script>
 </body>
 </html>
