@@ -89,10 +89,12 @@
   function editing(){return !!me;}
   function chip(p){
     // div statt button, weil Firefox Buttons nicht ziehen lässt
-    var c=el("div","tchip");
-    c.dataset.id=p.id;
-    if(editing()){c.tabIndex=0;c.setAttribute("role","button");c.draggable=true;c.setAttribute("aria-pressed",selected===p.id?"true":"false");c.title="Ziehen – oder antippen und dann Ziel antippen. Pfeiltasten verschieben.";}
-    c.appendChild(headImg(p,32));c.appendChild(el("span",null,p.name||p.displayName));
+    // nur der Kopf; der Name steht im Tooltip, das Profil öffnet sich per Klick
+    var c=el("div","tchip"),name=p.name||p.displayName;
+    c.dataset.id=p.id;c.tabIndex=0;c.setAttribute("role","button");
+    if(editing()){c.draggable=true;c.setAttribute("aria-pressed",selected===p.id?"true":"false");c.setAttribute("aria-label",name+" verschieben");c.title=name+" – ziehen oder antippen und dann Ziel antippen. Pfeiltasten verschieben.";}
+    else{c.setAttribute("aria-label","Profil von "+name+" öffnen");c.title=name;}
+    c.appendChild(headImg(p,48));
     if(selected===p.id)c.classList.add("sel");
     return c;
   }
@@ -166,8 +168,9 @@
     else if(lab&&selected){move(selected,lab.parentNode.dataset.tier||null,null);}
   });
   board.addEventListener("keydown",function(e){
-    var c=e.target.closest(".tchip");if(!c||!editing())return;
+    var c=e.target.closest(".tchip");if(!c)return;
     if(e.key==="Enter"||e.key===" "){e.preventDefault();c.click();return;}
+    if(!editing())return;
     var id=c.dataset.id,tier=c.closest(".tier-row").dataset.tier||null;
     if(e.key==="ArrowLeft"||e.key==="ArrowRight"){
       if(!tier)return;e.preventDefault();
