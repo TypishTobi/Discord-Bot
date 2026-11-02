@@ -348,3 +348,10 @@ img{max-width:100%}
 .tchip:focus-visible{outline:none}
 .tier-zone{gap:8px}
 @media (max-width:620px){.tchip{padding:4px}.tchip .mc-head{width:50px;height:50px}.tier-zone{gap:6px;padding:10px}}
+/* Bearbeiten: kleiner Profil-Knopf oben rechts am Kopf */
+.tchip{position:relative}
+.tchip-info{position:absolute;top:-7px;right:-7px;width:24px;height:24px;padding:0;border:0;border-radius:50%;cursor:pointer;
+  font:700 13px/24px var(--f-body);font-style:italic;text-align:center;color:var(--ink);background:linear-gradient(#a9ecfc,#5fcdf0);
+  box-shadow:var(--bevel),0 2px 8px rgba(0,0,0,.5);z-index:1}
+.tchip-info:hover,.tchip-info:focus-visible{filter:brightness(1.12);outline:2px solid var(--bolt);outline-offset:1px}
+@media (pointer:coarse){.tchip-info{width:28px;height:28px;line-height:28px;top:-9px;right:-9px}}

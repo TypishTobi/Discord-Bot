@@ -95,6 +95,7 @@
     if(editing()){c.draggable=true;c.setAttribute("aria-pressed",selected===p.id?"true":"false");c.setAttribute("aria-label",name+" verschieben");c.title=name+" – ziehen oder antippen und dann Ziel antippen. Pfeiltasten verschieben.";}
     else{c.setAttribute("aria-label","Profil von "+name+" öffnen");c.title=name;}
     c.appendChild(headImg(p,68));
+    if(editing()){var info=el("button","tchip-info","i");info.type="button";info.draggable=false;info.setAttribute("aria-label","Profil von "+name+" öffnen");info.title="Profil ansehen";c.appendChild(info);}
     if(selected===p.id)c.classList.add("sel");
     return c;
   }
@@ -157,6 +158,7 @@
   if(board){
   var dragId=null;
   board.addEventListener("click",function(e){
+    var pi=e.target.closest(".tchip-info");if(pi){openPlayer(byId(pi.parentNode.dataset.id));return;} // Profil-Knopf beim Bearbeiten
     if(!editing()){var v=e.target.closest(".tchip");if(v)openPlayer(byId(v.dataset.id));return;} // Ansehen: Spieler-Fenster
     var c=e.target.closest(".tchip"),lab=e.target.closest(".tier-label");
     if(c&&selected&&selected!==c.dataset.id){move(selected,c.closest(".tier-row").dataset.tier||null,c.dataset.id);return;}
@@ -168,7 +170,7 @@
     else if(lab&&selected){move(selected,lab.parentNode.dataset.tier||null,null);}
   });
   board.addEventListener("keydown",function(e){
-    var c=e.target.closest(".tchip");if(!c)return;
+    var c=e.target.closest(".tchip");if(!c||e.target.closest(".tchip-info"))return;
     if(e.key==="Enter"||e.key===" "){e.preventDefault();c.click();return;}
     if(!editing())return;
     var id=c.dataset.id,tier=c.closest(".tier-row").dataset.tier||null;
