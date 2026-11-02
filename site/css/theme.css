@@ -343,8 +343,8 @@ img{max-width:100%}
 .events{grid-template-columns:minmax(0,1fr)}
 /* Tierlist: nur Köpfe, Profil per Klick */
 .tchip{padding:5px;gap:0;border-radius:8px;transition:transform .15s,box-shadow .15s}
-.tchip .mc-head{width:44px;height:44px;border-radius:4px;image-rendering:pixelated}
+.tchip .mc-head{width:68px;height:68px;border-radius:4px;image-rendering:pixelated}
 .tierlist:not(.editing) .tchip:hover,.tchip:focus-visible{transform:translateY(-2px);box-shadow:var(--slot-in),0 0 0 2px var(--ice),0 0 18px rgba(111,216,247,.45)}
 .tchip:focus-visible{outline:none}
 .tier-zone{gap:8px}
-@media (max-width:620px){.tchip{padding:4px}.tchip .mc-head{width:36px;height:36px}.tier-zone{gap:6px;padding:10px}}
+@media (max-width:620px){.tchip{padding:4px}.tchip .mc-head{width:50px;height:50px}.tier-zone{gap:6px;padding:10px}}

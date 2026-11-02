@@ -94,7 +94,7 @@
     c.dataset.id=p.id;c.tabIndex=0;c.setAttribute("role","button");
     if(editing()){c.draggable=true;c.setAttribute("aria-pressed",selected===p.id?"true":"false");c.setAttribute("aria-label",name+" verschieben");c.title=name+" – ziehen oder antippen und dann Ziel antippen. Pfeiltasten verschieben.";}
     else{c.setAttribute("aria-label","Profil von "+name+" öffnen");c.title=name;}
-    c.appendChild(headImg(p,48));
+    c.appendChild(headImg(p,68));
     if(selected===p.id)c.classList.add("sel");
     return c;
   }
