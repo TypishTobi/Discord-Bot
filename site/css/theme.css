@@ -145,10 +145,10 @@ h3,h4{font-family:var(--f-display)}
 .page-card p{color:var(--mist);margin-top:10px}
 
 /* ---------- Unterseiten: Sturm-Kopf hinter dem ersten Abschnitt ---------- */
-body.subpage{background:linear-gradient(180deg,rgba(5,11,23,.7) 0,rgba(5,11,23,.8) 220px,var(--night) 640px),url(../assets/logo.jpg) center top/100% auto no-repeat,var(--night);background-color:var(--night)}
+body.subpage{--head-h:min(56.25vw,640px);background:linear-gradient(180deg,rgba(5,11,23,.7) 0,rgba(5,11,23,.82) calc(var(--head-h) * .5),var(--night) calc(var(--head-h) - 2px)),url(../assets/logo.jpg) center top/100% auto no-repeat,var(--night);background-color:var(--night)}
 .subpage main>section:first-child{padding-top:calc(var(--nav-h) + clamp(48px,7vw,96px))}
 .subpage main>section:first-child h2,.subpage main>section:first-child .tier-head h2{font-weight:900;font-size:clamp(54px,9vw,120px);line-height:.86;margin-bottom:18px}
-@media (max-width:760px){body.subpage{background-size:auto,auto 380px,auto}.subpage main>section:first-child{padding-top:calc(var(--nav-h) + 40px)}}
+@media (max-width:760px){body.subpage{--head-h:380px;background-size:auto,auto 380px,auto}.subpage main>section:first-child{padding-top:calc(var(--nav-h) + 40px)}}
 
 /* Login-Leiste fürs Team */
 .tier-login input{background:var(--slot);box-shadow:var(--slot-in);border:0;border-radius:6px;color:var(--frost)}
@@ -202,7 +202,8 @@ body.subpage{background:linear-gradient(180deg,rgba(5,11,23,.7) 0,rgba(5,11,23,.
 .sc-text strong{font-family:var(--f-display);font-weight:800;font-size:28px;text-transform:uppercase;line-height:1}
 .event{border-radius:12px}
 .ev-head strong{font-family:var(--f-display);font-weight:800;font-size:22px;text-transform:uppercase;letter-spacing:.01em;line-height:1.1}
-.ev-server,.ev-head time{font-family:var(--f-pixel);font-size:10px;letter-spacing:.06em}
+.ev-head time{font-family:var(--f-pixel);font-size:10px;letter-spacing:.06em}
+.ev-server{font:600 11px/1.5 ui-monospace,Consolas,monospace;letter-spacing:0;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .roster-rank{font-family:var(--f-pixel);font-size:11px;letter-spacing:.14em}
 .roster-card{border-radius:14px}
 .roster-card h4{font-family:var(--f-display);font-weight:800;font-size:24px;text-transform:uppercase;line-height:1}
@@ -274,3 +275,69 @@ footer strong{font-family:var(--f-display);font-weight:800;font-size:24px;text-t
   .hud-actions .btn{flex:1 1 100%}
 }
 @media (prefers-reduced-motion:reduce){.hero .hero-media img,.tier-label[data-t="S+"]::after,.cd-live::before{animation:none}}
+
+/* ---------- Handy, Tablet und Touch ---------- */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+a,button,summary,select,.tchip,.pcard,.team-card{-webkit-tap-highlight-color:transparent}
+.btn,button,.nav-toggle,.tchip,select{touch-action:manipulation}
+img{max-width:100%}
+/* Schwebe-Effekte nur mit Maus, sonst bleiben Karten nach dem Tippen "hängen" */
+@media (hover:none){
+  .btn:hover,.page-card:hover,.rule:hover,.creator-item .chip:hover{transform:none;filter:none}
+}
+/* iPhones zoomen bei Eingabefeldern unter 16px automatisch rein */
+@media (pointer:coarse){
+  input,select,textarea,.tier-login input,.pfield input,.pfield select,.pfield textarea,.pfilter select{font-size:16px}
+}
+@media (max-width:760px){
+  body{font-size:16px}
+  body::after{display:none}            /* Körnung kostet auf Handys Leistung beim Scrollen */
+  section{padding-block:56px 0}
+  .lead,.hud-text,.about .lead{font-size:17px}
+  .nav,.nav.solid{backdrop-filter:none;-webkit-backdrop-filter:none}
+  .nav.solid{background:rgba(5,11,23,.94)}
+  .tier-head{gap:16px}
+  .tier-auth,.tier-login{width:100%}
+  .tier-login input{flex:1 1 auto;width:auto;min-width:0}
+  .tier-login .btn{flex:none}
+  /* Kacheln der Startseite zweispaltig und kompakter */
+  .pages{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .page-card{padding:16px 14px 18px;border-radius:12px}
+  .page-card h3{font-size:22px}
+  .page-card p{font-size:14px;line-height:1.45;margin-top:6px}
+  .fact dd{font-size:40px}
+  .fact,.fact+.fact{padding:18px 14px}
+  .faq summary{font-size:17px;padding:18px 44px 18px 0}
+  .rule{padding:22px 20px 24px}
+  .rule h3{font-size:26px}
+  .team-dialog,.player-dialog{width:calc(100% - 24px);max-height:calc(100dvh - 24px);border-radius:14px}
+  footer{margin-top:72px}
+}
+@media (max-width:380px){
+  .wrap,.nav .wrap.nav-inner{padding-inline:max(14px,env(safe-area-inset-left,0px))}
+}
+@media (max-width:340px){
+  .pages{grid-template-columns:1fr}
+  .brand-word{font-size:19px}
+  .countdown .count span{font-size:24px}
+  .countdown .count small{font-size:9px;letter-spacing:.08em}
+  .hud h1{font-size:44px}
+}
+/* Handy quer: Hero nicht höher als der Bildschirm */
+@media (max-height:500px) and (orientation:landscape){
+  .hero .hero-media{max-height:70vh;min-height:0}
+  .hud{margin-top:-40px}
+  .nav .nav-links{max-height:calc(100dvh - var(--nav-h) - 8px)}
+}
+/* Tablets: Startseiten-Kacheln dreispaltig */
+@media (min-width:761px) and (max-width:1060px){
+  .pages{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .hud h1{font-size:clamp(56px,9vw,88px)}
+}
+/* Team-Karten: nie so schmal, dass Namen umbrechen */
+@media (min-width:561px) and (max-width:960px){.teams{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.teams{grid-template-columns:1fr}}
+.team-card li{min-width:0}
+/* Live-Events: lange Server-ID darf die Karte nicht verbreitern */
+.ev-body,.ev-head{min-width:0}
+.events{grid-template-columns:minmax(0,1fr)}
