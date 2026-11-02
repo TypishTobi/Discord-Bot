@@ -329,23 +329,64 @@ function parseTiers(contents) {
 
 // --- Live-Mitgliederliste für die Website ---------------------------------
 
+// Zwei Cache-Einträge: "frisch" (25 s) und eine Reserve-Kopie (1 Tag). Ist der frische
+// abgelaufen, bekommt der Besucher sofort die Reserve und die Liste wird im Hintergrund
+// neu gebaut – so wartet niemand auf Discord und die Mod-API.
+const MEMBERS_STALE_SECONDS = 86400;
+let membersBuilding = null;
+
+function membersKeys(url) {
+  const base = new URL("/members.json", url).toString();
+  return { fresh: new Request(base), stale: new Request(base + "?stale=1") };
+}
+
+function membersJson(body, maxAge) {
+  return new Response(body, {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": `public, max-age=${maxAge}`,
+    },
+  });
+}
+
+async function rebuildMembers(url, env) {
+  const body = JSON.stringify(await buildMembers(env));
+  const keys = membersKeys(url);
+  await Promise.all([
+    caches.default.put(keys.fresh, membersJson(body, MEMBERS_CACHE_SECONDS)),
+    caches.default.put(keys.stale, membersJson(body, MEMBERS_STALE_SECONDS)),
+  ]);
+  return body;
+}
+
+// Gleichzeitige Anfragen teilen sich einen Neubau
+function rebuildMembersOnce(url, env) {
+  if (!membersBuilding) membersBuilding = rebuildMembers(url, env).finally(() => { membersBuilding = null; });
+  return membersBuilding;
+}
+
+// Nach einer Änderung: frischen Eintrag verwerfen und sofort neu bauen
+async function invalidateMembers(url, env) {
+  await caches.default.delete(membersKeys(url).fresh);
+  try { await rebuildMembers(url, env); } catch (err) { console.error("Neubau der Mitgliederliste fehlgeschlagen:", err); }
+}
+
 async function membersResponse(request, env, ctx) {
   const cache = caches.default;
-  const cacheKey = new Request(new URL("/members.json", request.url).toString());
-  const cached = await cache.match(cacheKey);
+  const keys = membersKeys(request.url);
+  const cached = await cache.match(keys.fresh);
   if (cached) return cached;
+
+  const stale = await cache.match(keys.stale);
+  if (stale) {
+    ctx.waitUntil(rebuildMembersOnce(request.url, env).catch((err) => console.error(err)));
+    return membersJson(await stale.text(), 0);
+  }
 
   let response;
   try {
-    const payload = await buildMembers(env);
-    response = new Response(JSON.stringify(payload), {
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Access-Control-Allow-Origin": "*",
-        "Cache-Control": `public, max-age=${MEMBERS_CACHE_SECONDS}`,
-      },
-    });
-    ctx.waitUntil(cache.put(cacheKey, response.clone()));
+    response = membersJson(await rebuildMembersOnce(request.url, env), MEMBERS_CACHE_SECONDS);
   } catch (err) {
     console.error(err);
     response = new Response(JSON.stringify({ error: String(err.message).slice(0, 200) }), {
@@ -818,7 +859,7 @@ async function teamWrite(request, env, ctx, build, { requirePlayer = true } = {}
     }
 
     // Zwischengespeicherte Mitgliederliste verwerfen, damit die Änderung sofort sichtbar ist
-    ctx.waitUntil(caches.default.delete(new Request(new URL("/members.json", request.url).toString())));
+    ctx.waitUntil(invalidateMembers(request.url, env));
     return withCors(json({ ok: true, ...entry.result }));
   } catch (err) {
     console.error(err);
@@ -1175,7 +1216,7 @@ async function eventReceive(request, env, ctx) {
       let applied = [];
       try {
         applied = await applyModEvent(env, ev);
-        if (applied.length) ctx.waitUntil(caches.default.delete(new Request(new URL("/members.json", request.url).toString())));
+        if (applied.length) ctx.waitUntil(invalidateMembers(request.url, env));
       } catch (err) {
         console.error("Automatische Übernahme fehlgeschlagen:", err);
       }

@@ -27,21 +27,28 @@
       .finally(function(){if(timer)clearTimeout(timer);});
   }
   // quiet: Hintergrund-Aktualisierung; bei einem Fehler bleibt die bisherige Anzeige stehen
+  var CACHE_KEY="radius2-members",shown=false;
+  function apply(data){
+    var seen={};players=[];
+    (data.roles||[]).forEach(function(role){(role.members||[]).forEach(function(m){if(!seen[m.id]){seen[m.id]=1;players.push(m);}});});
+    if(data.tiers&&data.tiers.length)tiers=data.tiers;
+    if(data.teamCount)teamCount=data.teamCount;
+    if(data.maxHearts)maxHearts=data.maxHearts;
+    teams=data.teams||[];
+    links=data.links||{};
+    livesSynced=!!data.livesSynced;
+    shown=true;renderRoster();rerender();
+  }
   function load(quiet){
+    // Beim Öffnen sofort den zuletzt gesehenen Stand zeigen; der frische kommt gleich danach
+    if(!quiet&&!shown){try{var old=JSON.parse(read(CACHE_KEY)||"null");if(old&&old.roles)apply(old);}catch(e){}}
     var source=getJSON(WORKER+"/members.json");
     if(!quiet)source=source.catch(function(){return getJSON("members.json");});
     return source.then(function(data){
-      var seen={};players=[];
-      (data.roles||[]).forEach(function(role){(role.members||[]).forEach(function(m){if(!seen[m.id]){seen[m.id]=1;players.push(m);}});});
-      if(data.tiers&&data.tiers.length)tiers=data.tiers;
-      if(data.teamCount)teamCount=data.teamCount;
-      if(data.maxHearts)maxHearts=data.maxHearts;
-      teams=data.teams||[];
-      links=data.links||{};
-      livesSynced=!!data.livesSynced;
-      renderRoster();rerender();
+      apply(data);
+      store(CACHE_KEY,JSON.stringify(data));
     }).catch(function(){
-      if(quiet)return;
+      if(quiet||shown)return;
       if(board)board.innerHTML='<p class="note">Die Tierlist konnte gerade nicht geladen werden.</p>';
       if(grid)grid.innerHTML='<p class="note">Die Spieler konnten gerade nicht geladen werden.</p>';
     });
