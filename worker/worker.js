@@ -922,13 +922,13 @@ async function postSignup(env, draft) {
   }
   if (startAt && env.EVENTS_KV) {
     const list = (await env.EVENTS_KV.get(SCHEDULE_KEY, "json")) || [];
-    list.push({ messageId: message.id, channelId, roleId, title, startAt });
+    list.push({ messageId: message.id, channelId, roleId, title, startAt, guildId, pingChannelId: draft.pingChannelId || channelId });
     await env.EVENTS_KV.put(SCHEDULE_KEY, JSON.stringify(list));
   }
   const link = `https://discord.com/channels/${guildId}/${channelId}/${message.id}`;
   return `✅ Anmeldung „${title}“ in <#${channelId}> gesendet: ${link}\n` +
     `Wer sich einträgt, bekommt <@&${roleId}>` + (limit ? ` (höchstens ${limit} Personen).` : " (ohne Limit).") +
-    (startAt ? `\nStart: <t:${Math.floor(startAt / 1000)}:F> – dann werden alle mit <@&${roleId}> gepingt.` : "") +
+    (startAt ? `\nStart: <t:${Math.floor(startAt / 1000)}:F> – dann werden alle mit <@&${roleId}> in <#${draft.pingChannelId || channelId}> gepingt.` : "") +
     (pings.length ? `\nGepingt: ${pings.join(" ")}` : "");
 }
 
@@ -938,10 +938,14 @@ function pingPanel(draftId, draft) {
     ...draft.roles.map(id => `<@&${id}>`), ...draft.users.map(id => `<@${id}>`)].filter(Boolean);
   return {
     content: `📣 **${draft.title}** → <#${draft.channelId}>\n` +
-      (draft.startAt ? `**Start:** <t:${Math.floor(draft.startAt / 1000)}:F>\n` : "") +
+      (draft.startAt ? `**Start:** <t:${Math.floor(draft.startAt / 1000)}:F> – Start-Ping in <#${draft.pingChannelId || draft.channelId}>\n` : "") +
       `**Limit:** ${draft.limit ? draft.limit + " Personen" : "ohne Limit"}\n` +
       `**Ping beim Senden:** ${chosen.length ? chosen.join(" ") : "niemand"}`,
     components: [
+      // Nur mit Startzeit: Kanal für den Ping zum Start (Standard: Kanal der Anmeldung)
+      ...(draft.startAt ? [{ type: 1, components: [{ type: 8, custom_id: `eventping:pingchannel:${draftId}`, channel_types: [0, 5],
+        placeholder: "Kanal für den Start-Ping …", min_values: 1, max_values: 1,
+        default_values: [{ id: draft.pingChannelId || draft.channelId, type: "channel" }] }] }] : []),
       { type: 1, components: [{ type: 3, custom_id: `eventping:limit:${draftId}`, placeholder: "Limit wählen …",
         options: LIMIT_CHOICES.map(n => ({ label: n ? `Höchstens ${n} Personen` : "Ohne Limit", value: String(n), default: n === (draft.limit || 0) })) }] },
       { type: 1, components: [{ type: 7, custom_id: `eventping:pick:${draftId}`, placeholder: "Rollen oder Spieler auswählen …", min_values: 0, max_values: 10,
@@ -988,6 +992,8 @@ async function handleEventPing(interaction, env, ctx) {
       return json({ type: 4, data: { content: "❌ Du darfst auf diesem Server nicht @everyone/@here pingen.", flags: EPHEMERAL } });
     }
     draft[action] = !draft[action];
+  } else if (action === "pingchannel") {
+    draft.pingChannelId = interaction.data.values?.[0] || draft.channelId;
   } else if (action === "limit") {
     draft.limit = Math.min(MAX_SIGNUPS, Number(interaction.data.values?.[0]) || 0);
   } else if (action === "pick") {
@@ -1259,9 +1265,12 @@ async function runEventReminders(env) {
   for (const e of due) {
     if (now - e.startAt > 30 * 60 * 1000) continue; // mehr als 30 Minuten verpasst: nicht mehr pingen
     try {
-      await discord(env, `/channels/${e.channelId}/messages`, "POST", {
-        content: `🔔 <@&${e.roleId}> **${e.title}** startet jetzt!`,
-        message_reference: { message_id: e.messageId, fail_if_not_exists: false },
+      // Im Kanal der Anmeldung als Antwort darauf, in einem anderen Kanal mit Link zur Anmeldung
+      const target = e.pingChannelId || e.channelId, same = target === e.channelId;
+      const link = e.guildId ? `https://discord.com/channels/${e.guildId}/${e.channelId}/${e.messageId}` : `<#${e.channelId}>`;
+      await discord(env, `/channels/${target}/messages`, "POST", {
+        content: `🔔 <@&${e.roleId}> **${e.title}** startet jetzt!` + (same ? "" : `\n${link}`),
+        ...(same ? { message_reference: { message_id: e.messageId, fail_if_not_exists: false } } : {}),
         allowed_mentions: { roles: [e.roleId] },
       });
     } catch (err) {
