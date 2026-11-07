@@ -22,6 +22,7 @@
 //   SITE_URL            Optional; Adresse der Website (Standard siehe unten)
 //   SESSION_SECRET      Optional; Schlüssel für Website-Sitzungen (Standard: Bot-Token)
 //   ANMELDUNG_CHANNEL_ID Optional; Kanal, in dem /event erlaubt ist (Standard siehe unten)
+//   EVENT_ADMIN_ROLE_ID Optional; ab dieser Rolle ist /event überall erlaubt (Standard: Rolle "Admin")
 //
 // Team-Login: /login in Discord liefert einen Einmal-Code (nur für den Nutzer sichtbar,
 // 10 Minuten gültig), der als "login:<code>:<discordId>:<ablauf>" im Tier-Kanal liegt.
@@ -166,8 +167,8 @@ export default {
     // an den verschickten Anmelde-Nachrichten
     if (interaction.type === 2 && interaction.data.name === "event") {
       const controlChannel = signupControlChannel(env);
-      if (interaction.channel_id !== controlChannel) {
-        return json({ type: 4, data: { content: `❌ Diesen Befehl kannst du nur in <#${controlChannel}> benutzen.`, flags: EPHEMERAL } });
+      if (interaction.channel_id !== controlChannel && !(await isEventAdmin(interaction, env).catch(() => false))) {
+        return json({ type: 4, data: { content: `❌ Diesen Befehl kannst du nur in <#${controlChannel}> benutzen (Admins überall).`, flags: EPHEMERAL } });
       }
       return json({ type: 9, data: signupModal() });
     }
@@ -801,6 +802,22 @@ function signupControlChannel(env) {
   return (env.ANMELDUNG_CHANNEL_ID || DEFAULT_ANMELDUNG_CHANNEL_ID).trim();
 }
 
+// Admins und alle darüber dürfen /event in jedem Kanal benutzen: Administrator-Recht oder eine
+// Rolle ab EVENT_ADMIN_ROLE_ID (Standard: die Rolle mit dem Namen "Admin", z. B. "🛡 ┃ Admin")
+async function isEventAdmin(interaction, env) {
+  const member = interaction.member;
+  if (!member) return false;
+  if ((BigInt(member.permissions ?? 0) & ADMINISTRATOR) === ADMINISTRATOR) return true;
+  const roles = await discord(env, `/guilds/${interaction.guild_id}/roles`, "GET");
+  const key = name => String(name).toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
+  const adminRole = env.EVENT_ADMIN_ROLE_ID
+    ? roles.find(r => r.id === env.EVENT_ADMIN_ROLE_ID.trim())
+    : roles.find(r => key(r.name) === "admin");
+  if (!adminRole) return false;
+  const position = new Map(roles.map(r => [r.id, r.position]));
+  return member.roles.some(id => (position.get(id) ?? -1) >= adminRole.position);
+}
+
 // Fenster für /event: Label-Komponenten (Typ 18) mit Textfeldern und Kanal-/Rollen-Auswahl
 function signupModal() {
   const label = (text, description, component) => ({ type: 18, label: text, description, component });
@@ -830,8 +847,8 @@ function modalValues(interaction) {
 
 async function handleSignupSubmit(interaction, env) {
   const controlChannel = signupControlChannel(env);
-  if (interaction.channel_id !== controlChannel) {
-    return `❌ Diesen Befehl kannst du nur in <#${controlChannel}> benutzen.`;
+  if (interaction.channel_id !== controlChannel && !(await isEventAdmin(interaction, env))) {
+    return `❌ Diesen Befehl kannst du nur in <#${controlChannel}> benutzen (Admins überall).`;
   }
   const v = modalValues(interaction);
   const limitText = String(v.limit ?? "").trim();
