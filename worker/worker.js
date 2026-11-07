@@ -21,7 +21,7 @@
 //   TIER_CHANNEL_ID     Optional; Kanal für Tier-Einträge und Login-Codes (Standard: MC_CHANNEL_ID)
 //   SITE_URL            Optional; Adresse der Website (Standard siehe unten)
 //   SESSION_SECRET      Optional; Schlüssel für Website-Sitzungen (Standard: Bot-Token)
-//   ANMELDUNG_CHANNEL_ID Optional; Kanal, in dem /anmeldung erlaubt ist (Standard siehe unten)
+//   ANMELDUNG_CHANNEL_ID Optional; Kanal, in dem /event erlaubt ist (Standard siehe unten)
 //
 // Team-Login: /login in Discord liefert einen Einmal-Code (nur für den Nutzer sichtbar,
 // 10 Minuten gültig), der als "login:<code>:<discordId>:<ablauf>" im Tier-Kanal liegt.
@@ -162,9 +162,17 @@ export default {
       return json({ type: 5, data: { flags: EPHEMERAL } });
     }
 
-    // Anmeldungen mit Rolle: Befehl im Steuer-Kanal und Knöpfe an den Anmelde-Nachrichten
-    if (interaction.type === 2 && interaction.data.name === "anmeldung") {
-      ctx.waitUntil(respond(interaction, () => handleSignupCommand(interaction, env)));
+    // Anmeldungen mit Rolle: /event öffnet im Steuer-Kanal ein Fenster, die Knöpfe hängen
+    // an den verschickten Anmelde-Nachrichten
+    if (interaction.type === 2 && interaction.data.name === "event") {
+      const controlChannel = signupControlChannel(env);
+      if (interaction.channel_id !== controlChannel) {
+        return json({ type: 4, data: { content: `❌ Diesen Befehl kannst du nur in <#${controlChannel}> benutzen.`, flags: EPHEMERAL } });
+      }
+      return json({ type: 9, data: signupModal() });
+    }
+    if (interaction.type === 5 && interaction.data.custom_id === "event_modal") {
+      ctx.waitUntil(respond(interaction, () => handleSignupSubmit(interaction, env)));
       return json({ type: 5, data: { flags: EPHEMERAL } });
     }
     if (interaction.type === 3 && interaction.data.custom_id.startsWith("signup:")) {
@@ -764,30 +772,66 @@ function rolesReachMin(env, roles, memberRoleIds) {
   return memberRoleIds.some(id => (position.get(id) ?? -1) >= min);
 }
 
-// --- Anmeldungen mit Rolle (/anmeldung) --------------------------------------
-// Nur im Steuer-Kanal (ANMELDUNG_CHANNEL_ID) nutzbar: schickt in einen anderen Kanal eine
-// Nachricht mit "Eintragen"/"Austragen". Wer sich einträgt, bekommt die festgelegte Rolle,
-// bis das Limit voll ist. Die Teilnehmer stehen in der Nachricht selbst (kein Speicher nötig);
-// Rolle und Limit stecken in der custom_id der Knöpfe ("signup:join:<rolle>:<limit>").
+// --- Anmeldungen mit Rolle (/event) ------------------------------------------
+// Nur im Steuer-Kanal (ANMELDUNG_CHANNEL_ID) nutzbar: /event öffnet ein Fenster (Titel,
+// Beschreibung, Kanal, Rolle, Limit) und schickt danach in den gewählten Kanal eine Nachricht
+// mit "Eintragen"/"Austragen". Wer sich einträgt, bekommt die Rolle, bis das Limit voll ist.
+// Die Teilnehmer stehen in der Nachricht selbst (kein Speicher nötig); Rolle und Limit
+// stecken in der custom_id der Knöpfe ("signup:join:<rolle>:<limit>").
 
 const DEFAULT_ANMELDUNG_CHANNEL_ID = "1568598689839059005";
 const MAX_SIGNUPS = 200; // mehr Erwähnungen passen nicht in eine Discord-Nachricht
-// Rollen mit diesen Rechten darf /anmeldung nicht verteilen: Kick, Ban, Admin, Kanäle, Server,
+// Rollen mit diesen Rechten darf /event nicht verteilen: Kick, Ban, Admin, Kanäle, Server,
 // Nachrichten verwalten, @everyone erwähnen, Nicknames, Rollen, Webhooks, Emojis, Timeout
 const DANGEROUS_PERMISSIONS = [1n, 2n, 3n, 4n, 5n, 13n, 17n, 27n, 28n, 29n, 30n, 40n]
   .reduce((all, bit) => all | (1n << bit), 0n);
 
-async function handleSignupCommand(interaction, env) {
-  const controlChannel = (env.ANMELDUNG_CHANNEL_ID || DEFAULT_ANMELDUNG_CHANNEL_ID).trim();
+function signupControlChannel(env) {
+  return (env.ANMELDUNG_CHANNEL_ID || DEFAULT_ANMELDUNG_CHANNEL_ID).trim();
+}
+
+// Fenster für /event: Label-Komponenten (Typ 18) mit Textfeldern und Kanal-/Rollen-Auswahl
+function signupModal() {
+  const label = (text, description, component) => ({ type: 18, label: text, description, component });
+  return {
+    custom_id: "event_modal",
+    title: "Event-Anmeldung erstellen",
+    components: [
+      label("Titel", undefined, { type: 4, custom_id: "titel", style: 1, max_length: 100, required: true, placeholder: "z. B. Bau-Event am Samstag" }),
+      label("Beschreibung", "Optional", { type: 4, custom_id: "text", style: 2, max_length: 1500, required: false, placeholder: "Was, wann, wo …" }),
+      label("Kanal", "Wohin die Anmeldung geschickt wird", { type: 8, custom_id: "kanal", channel_types: [0, 5], min_values: 1, max_values: 1 }),
+      label("Rolle", "Die bekommt man beim Eintragen", { type: 6, custom_id: "rolle", min_values: 1, max_values: 1 }),
+      label("Limit", "Höchstens so viele Personen (leer = ohne Limit)", { type: 4, custom_id: "limit", style: 1, max_length: 3, required: false, placeholder: "z. B. 20" }),
+    ],
+  };
+}
+
+// Werte aus dem abgeschickten Fenster lesen (Label-Komponenten und ältere Zeilen)
+function modalValues(interaction) {
+  const values = {};
+  for (const row of interaction.data.components ?? []) {
+    for (const c of row.component ? [row.component] : row.components ?? []) {
+      values[c.custom_id] = c.values ? c.values[0] : String(c.value ?? "").trim();
+    }
+  }
+  return values;
+}
+
+async function handleSignupSubmit(interaction, env) {
+  const controlChannel = signupControlChannel(env);
   if (interaction.channel_id !== controlChannel) {
     return `❌ Diesen Befehl kannst du nur in <#${controlChannel}> benutzen.`;
   }
-  const option = name => interaction.data.options?.find(o => o.name === name)?.value;
-  const channelId = String(option("kanal"));
-  const roleId = String(option("rolle"));
-  const title = String(option("titel") ?? "").trim().slice(0, 100);
-  const text = String(option("text") ?? "").replace(/\\n/g, "\n").trim().slice(0, 1500);
-  const limit = Math.max(0, Math.min(MAX_SIGNUPS, Number(option("limit")) || 0));
+  const v = modalValues(interaction);
+  const limitText = String(v.limit ?? "").trim();
+  if (limitText && !/^\d+$/.test(limitText)) return "❌ Beim Limit bitte nur eine Zahl eintragen (oder leer lassen).";
+  if (Number(limitText) > MAX_SIGNUPS) return `❌ Das Limit darf höchstens ${MAX_SIGNUPS} sein.`;
+  if (!v.kanal || !v.rolle) return "❌ Bitte Kanal und Rolle auswählen.";
+  const channelId = String(v.kanal);
+  const roleId = String(v.rolle);
+  const title = String(v.titel ?? "").trim().slice(0, 100);
+  const text = String(v.text ?? "").trim().slice(0, 1500);
+  const limit = Number(limitText) || 0;
   const guildId = interaction.guild_id;
   const userId = interaction.member.user.id;
 
