@@ -80,6 +80,12 @@ const ADMINISTRATOR = 1n << 3n;
 const EPHEMERAL = 64;
 
 export default {
+  // Cron-Trigger (in Cloudflare: Worker -> Settings -> Trigger Events -> Cron "* * * * *"):
+  // pingt jede Minute die Rollen der Events, die gerade starten
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runEventReminders(env));
+  },
+
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
     if (request.method === "OPTIONS") return withCors(new Response(null, { status: 204 }));
@@ -181,6 +187,10 @@ export default {
     }
     if (interaction.type === 3 && interaction.data.custom_id.startsWith("signup:manage:")) {
       ctx.waitUntil(respond(interaction, () => handleSignupManage(interaction, env)));
+      return json({ type: 5, data: { flags: EPHEMERAL } });
+    }
+    if (interaction.type === 3 && interaction.data.custom_id.startsWith("signupend:")) {
+      ctx.waitUntil(respond(interaction, () => handleSignupEnd(interaction, env)));
       return json({ type: 5, data: { flags: EPHEMERAL } });
     }
     if (interaction.type === 3 && interaction.data.custom_id.startsWith("signupmod:")) {
@@ -829,7 +839,7 @@ function signupModal() {
       label("Beschreibung", "Optional", { type: 4, custom_id: "text", style: 2, max_length: 1500, required: false, placeholder: "Was, wann, wo …" }),
       label("Kanal", "Wohin die Anmeldung geschickt wird", { type: 8, custom_id: "kanal", channel_types: [0, 5], min_values: 1, max_values: 1 }),
       label("Rolle", "Die bekommt man beim Eintragen", { type: 6, custom_id: "rolle", min_values: 1, max_values: 1 }),
-      label("Limit", "Höchstens so viele Personen (leer = ohne Limit)", { type: 4, custom_id: "limit", style: 1, max_length: 3, required: false, placeholder: "z. B. 20" }),
+      label("Startzeit", "Optional. Zum Start werden alle mit der Rolle gepingt (deutsche Zeit)", { type: 4, custom_id: "start", style: 1, max_length: 20, required: false, placeholder: "z. B. 20.11. 18:00 oder 18:00" }),
     ],
   };
 }
@@ -851,15 +861,17 @@ async function handleSignupSubmit(interaction, env) {
     return `❌ Diesen Befehl kannst du nur in <#${controlChannel}> benutzen (Admins überall).`;
   }
   const v = modalValues(interaction);
-  const limitText = String(v.limit ?? "").trim();
-  if (limitText && !/^\d+$/.test(limitText)) return "❌ Beim Limit bitte nur eine Zahl eintragen (oder leer lassen).";
-  if (Number(limitText) > MAX_SIGNUPS) return `❌ Das Limit darf höchstens ${MAX_SIGNUPS} sein.`;
+  let startAt = 0;
+  if (String(v.start ?? "").trim()) {
+    startAt = parseStartTime(v.start, Date.now());
+    if (typeof startAt === "string") return startAt;
+  }
   if (!v.kanal || !v.rolle) return "❌ Bitte Kanal und Rolle auswählen.";
   const channelId = String(v.kanal);
   const roleId = String(v.rolle);
   const title = String(v.titel ?? "").trim().slice(0, 100);
   const text = String(v.text ?? "").trim().slice(0, 1500);
-  const limit = Number(limitText) || 0;
+  const limit = 0; // wird im zweiten Schritt gewählt
   const guildId = interaction.guild_id;
   const userId = interaction.member.user.id;
 
@@ -884,7 +896,7 @@ async function handleSignupSubmit(interaction, env) {
     return `❌ Der Bot kann <@&${roleId}> nicht vergeben: Die Rolle muss in den Server-Einstellungen unter der Rolle des Bots stehen.`;
   }
 
-  const draft = { guildId, channelId, roleId, title, text, limit, creatorId: userId, roles: [], users: [], everyone: false, here: false };
+  const draft = { guildId, channelId, roleId, title, text, limit, startAt, creatorId: userId, roles: [], users: [], everyone: false, here: false };
   if (!env.EVENTS_KV) return postSignup(env, draft); // ohne Speicher kein Ping-Schritt
   const draftId = interaction.id;
   await env.EVENTS_KV.put(`eventdraft:${draftId}`, JSON.stringify(draft), { expirationTtl: 3600 });
@@ -893,14 +905,14 @@ async function handleSignupSubmit(interaction, env) {
 
 // Anmelde-Nachricht senden (mit den gewählten Pings im Nachrichtentext)
 async function postSignup(env, draft) {
-  const { guildId, channelId, roleId, title, text, limit, creatorId } = draft;
+  const { guildId, channelId, roleId, title, text, limit, creatorId, startAt = 0 } = draft;
   const pings = [draft.everyone && "@everyone", draft.here && "@here",
     ...draft.roles.map(id => `<@&${id}>`), ...draft.users.map(id => `<@${id}>`)].filter(Boolean);
   let message;
   try {
     message = await discord(env, `/channels/${channelId}/messages`, "POST", {
       ...(pings.length ? { content: pings.join(" ") } : {}),
-      ...signupMessage({ title, text, roleId, limit, ids: [], creatorId }),
+      ...signupMessage({ title, text, roleId, limit, ids: [], creatorId, startAt }),
       allowed_mentions: { parse: draft.everyone || draft.here ? ["everyone"] : [], roles: draft.roles, users: draft.users },
     });
   } catch (err) {
@@ -908,9 +920,15 @@ async function postSignup(env, draft) {
     return `❌ Ich konnte in <#${channelId}> nichts senden. Der Bot braucht dort die Rechte „Kanal ansehen“, „Nachrichten senden“ und „Links einbetten“` +
       (pings.length ? " (für @everyone oder nicht erwähnbare Rollen auch „Alle erwähnen“)." : ".");
   }
+  if (startAt && env.EVENTS_KV) {
+    const list = (await env.EVENTS_KV.get(SCHEDULE_KEY, "json")) || [];
+    list.push({ messageId: message.id, channelId, roleId, title, startAt });
+    await env.EVENTS_KV.put(SCHEDULE_KEY, JSON.stringify(list));
+  }
   const link = `https://discord.com/channels/${guildId}/${channelId}/${message.id}`;
   return `✅ Anmeldung „${title}“ in <#${channelId}> gesendet: ${link}\n` +
     `Wer sich einträgt, bekommt <@&${roleId}>` + (limit ? ` (höchstens ${limit} Personen).` : " (ohne Limit).") +
+    (startAt ? `\nStart: <t:${Math.floor(startAt / 1000)}:F> – dann werden alle mit <@&${roleId}> gepingt.` : "") +
     (pings.length ? `\nGepingt: ${pings.join(" ")}` : "");
 }
 
@@ -919,9 +937,13 @@ function pingPanel(draftId, draft) {
   const chosen = [draft.everyone && "@everyone", draft.here && "@here",
     ...draft.roles.map(id => `<@&${id}>`), ...draft.users.map(id => `<@${id}>`)].filter(Boolean);
   return {
-    content: `📣 **${draft.title}** → <#${draft.channelId}>\nWer soll beim Senden gepingt werden?\n` +
-      `**Ping:** ${chosen.length ? chosen.join(" ") : "niemand"}`,
+    content: `📣 **${draft.title}** → <#${draft.channelId}>\n` +
+      (draft.startAt ? `**Start:** <t:${Math.floor(draft.startAt / 1000)}:F>\n` : "") +
+      `**Limit:** ${draft.limit ? draft.limit + " Personen" : "ohne Limit"}\n` +
+      `**Ping beim Senden:** ${chosen.length ? chosen.join(" ") : "niemand"}`,
     components: [
+      { type: 1, components: [{ type: 3, custom_id: `eventping:limit:${draftId}`, placeholder: "Limit wählen …",
+        options: LIMIT_CHOICES.map(n => ({ label: n ? `Höchstens ${n} Personen` : "Ohne Limit", value: String(n), default: n === (draft.limit || 0) })) }] },
       { type: 1, components: [{ type: 7, custom_id: `eventping:pick:${draftId}`, placeholder: "Rollen oder Spieler auswählen …", min_values: 0, max_values: 10,
         default_values: [...draft.roles.map(id => ({ id, type: "role" })), ...draft.users.map(id => ({ id, type: "user" }))] }] },
       { type: 1, components: [
@@ -966,6 +988,8 @@ async function handleEventPing(interaction, env, ctx) {
       return json({ type: 4, data: { content: "❌ Du darfst auf diesem Server nicht @everyone/@here pingen.", flags: EPHEMERAL } });
     }
     draft[action] = !draft[action];
+  } else if (action === "limit") {
+    draft.limit = Math.min(MAX_SIGNUPS, Number(interaction.data.values?.[0]) || 0);
   } else if (action === "pick") {
     const resolved = interaction.data.resolved ?? {};
     const values = interaction.data.values ?? [];
@@ -977,9 +1001,10 @@ async function handleEventPing(interaction, env, ctx) {
 }
 
 // Nachricht samt Knöpfen aus Titel, Text, Rolle, Limit und Teilnehmern bauen
-function signupMessage({ title, text, roleId, limit, ids, description, creatorId = "" }) {
+function signupMessage({ title, text, roleId, limit, ids, description, creatorId = "", startAt = 0, ended = false }) {
   const full = ids.length >= (limit || MAX_SIGNUPS);
-  const desc = description ?? ((text ? text + "\n\n" : "") + `**Rolle:** <@&${roleId}>` + (limit ? `\n**Plätze:** ${limit}` : ""));
+  const start = startAt ? `\n**Start:** <t:${Math.floor(startAt / 1000)}:F> (<t:${Math.floor(startAt / 1000)}:R>)` : "";
+  const desc = description ?? ((text ? text + "\n\n" : "") + `**Rolle:** <@&${roleId}>` + (limit ? `\n**Plätze:** ${limit}` : "") + start);
   const fields = [];
   let chunk = "";
   for (const line of ids.map((id, i) => `${i + 1}. <@${id}>`)) {
@@ -992,15 +1017,15 @@ function signupMessage({ title, text, roleId, limit, ids, description, creatorId
     embeds: [{
       title,
       description: desc,
-      color: full ? 0x62789a : 0x6fd8f7,
-      fields: (fields.length ? fields : ["Noch niemand – sei der Erste!"]).map((value, i) => ({ name: i ? "​" : head, value })),
-      footer: full ? { text: "Alle Plätze sind vergeben." } : undefined,
+      color: full || ended ? 0x62789a : 0x6fd8f7,
+      fields: (fields.length ? fields : [ended ? "Niemand" : "Noch niemand – sei der Erste!"]).map((value, i) => ({ name: i ? "​" : head, value })),
+      footer: ended ? { text: "Event beendet – die Rollen wurden entfernt." } : full ? { text: "Alle Plätze sind vergeben." } : undefined,
     }],
     components: [{
       type: 1,
       components: [
-        { type: 2, style: 3, custom_id: `signup:join:${roleId}:${limit}`, label: full ? "Voll" : "Eintragen", emoji: { name: "✅" }, disabled: full },
-        { type: 2, style: 2, custom_id: `signup:leave:${roleId}:${limit}`, label: "Austragen" },
+        { type: 2, style: 3, custom_id: `signup:join:${roleId}:${limit}`, label: ended ? "Beendet" : full ? "Voll" : "Eintragen", emoji: { name: "✅" }, disabled: full || ended },
+        { type: 2, style: 2, custom_id: `signup:leave:${roleId}:${limit}`, label: "Austragen", disabled: ended },
         { type: 2, style: 2, custom_id: `signup:manage:${roleId}:${limit}:${creatorId}`, label: "Verwalten", emoji: { name: "⚙️" } },
       ],
     }],
@@ -1035,6 +1060,7 @@ async function handleSignupButton(interaction, env) {
     const rolePath = `/guilds/${interaction.guild_id}/members/${userId}/roles/${roleId}`;
 
     if (action === "join") {
+      if (signupSettings(message).ended) return reply("🏁 Dieses Event ist schon beendet.");
       if (ids.includes(userId)) return reply(`ℹ️ Du bist schon eingetragen und hast <@&${roleId}>.`);
       if ((await signupBans(env, message.id)).includes(userId)) return reply("🚫 Du wurdest von diesem Event ausgeschlossen.");
       if (ids.length >= (limit || MAX_SIGNUPS)) return reply("❌ Leider sind schon alle Plätze vergeben.");
@@ -1085,7 +1111,7 @@ function signupSettings(message) {
   const join = (message.components ?? []).flatMap(row => row.components ?? [])
     .find(c => String(c.custom_id).startsWith("signup:join:"));
   const [, , roleId, limit] = join ? join.custom_id.split(":") : [];
-  return { roleId, limit: Number(limit) || 0 };
+  return { roleId, limit: Number(limit) || 0, ended: join?.label === "Beendet" };
 }
 
 async function signupBans(env, messageId) {
@@ -1116,6 +1142,7 @@ async function handleSignupManage(interaction, env) {
       select("kick", "👢 Teilnehmer kicken …"),
       select("ban", "🚫 Teilnehmer bannen …"),
       select("unban", "✅ Bann aufheben …"),
+      { type: 1, components: [{ type: 2, style: 4, custom_id: `signupend:${interaction.channel_id}:${message.id}`, label: "Event beenden & Rollen entfernen", emoji: { name: "🏁" } }] },
     ],
   };
 }
@@ -1130,7 +1157,7 @@ async function handleSignupModeration(interaction, env) {
   if ((action === "ban" || action === "unban") && !env.EVENTS_KV) {
     return "❌ Bannen braucht den KV-Speicher EVENTS_KV im Worker.";
   }
-  const { roleId, limit } = signupSettings(message);
+  const { roleId, limit, ended } = signupSettings(message);
   const ids = signupIds(message);
   const bans = await signupBans(env, messageId);
   const targets = [...new Set(interaction.data.values ?? [])];
@@ -1152,7 +1179,7 @@ async function handleSignupModeration(interaction, env) {
   if (kicked.length) {
     const embed = message.embeds?.[0] ?? {};
     await discord(env, `/channels/${channelId}/messages/${messageId}`, "PATCH", {
-      ...signupMessage({ title: embed.title, description: embed.description, roleId, limit, ids, creatorId }),
+      ...signupMessage({ title: embed.title, description: embed.description, roleId, limit, ids, creatorId, ended }),
       allowed_mentions: { parse: [] },
     });
   }
@@ -1167,6 +1194,124 @@ async function handleSignupModeration(interaction, env) {
   if (unbanned.length) lines.push(`✅ Bann aufgehoben: ${list(unbanned)}`);
   if (notBanned.length) lines.push(`ℹ️ Nicht gebannt: ${list(notBanned)}`);
   return lines.join("\n") || "Nichts geändert.";
+}
+
+// --- Startzeit, Erinnerung zum Start und Event beenden -----------------------
+
+const SCHEDULE_KEY = "eventschedule";
+const LIMIT_CHOICES = [0, 2, 3, 4, 5, 6, 8, 10, 12, 15, 16, 20, 24, 25, 30, 32, 40, 48, 50, 60, 64, 80, 100, 150, 200];
+
+// Uhrzeit in Deutschland (Europe/Berlin, mit Sommerzeit) als Teile bzw. umgerechnet in UTC
+function berlinParts(ms) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Berlin", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(ms));
+  const get = type => Number(parts.find(p => p.type === type).value);
+  return { y: get("year"), m: get("month"), d: get("day"), h: get("hour"), min: get("minute") };
+}
+function berlinToUtc(y, m, d, h, min) {
+  const wanted = Date.UTC(y, m - 1, d, h, min);
+  let t = wanted;
+  for (let i = 0; i < 3; i++) {
+    const p = berlinParts(t);
+    t += wanted - Date.UTC(p.y, p.m - 1, p.d, p.h, p.min);
+  }
+  return t;
+}
+
+// "18:00", "20.11. 18:00", "20.11.2026 18:00" (auch "um 18 Uhr", "18.30") -> Zeitpunkt in ms oder Fehlertext
+function parseStartTime(input, now) {
+  const s = String(input).toLowerCase().replace(/uhr|um|,/g, " ").replace(/\s+/g, " ").trim();
+  const today = berlinParts(now);
+  let y, mo, d, h, min, kind, m;
+  if ((m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})? (\d{1,2})(?:[:.](\d{2}))?$/))) {
+    [d, mo, h, min] = [Number(m[1]), Number(m[2]), Number(m[4]), Number(m[5] || 0)];
+    if (m[3]) { y = Number(m[3]) < 100 ? 2000 + Number(m[3]) : Number(m[3]); kind = "full"; } else { y = today.y; kind = "date"; }
+  } else if ((m = s.match(/^(\d{1,2})(?:[:.](\d{2}))?$/))) {
+    [y, mo, d, h, min, kind] = [today.y, today.m, today.d, Number(m[1]), Number(m[2] || 0), "time"];
+  } else {
+    return "❌ Die Startzeit verstehe ich nicht. Beispiele: „18:00“, „20.11. 18:00“ oder „20.11.2026 18:00“.";
+  }
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || min > 59) return "❌ Diese Startzeit gibt es nicht.";
+  let at = berlinToUtc(y, mo, d, h, min);
+  const check = berlinParts(at);
+  if (check.d !== d || check.m !== mo) return "❌ Dieses Datum gibt es nicht.";
+  if (at <= now && kind === "time") { // nur Uhrzeit und heute schon vorbei -> morgen
+    const p = berlinParts(at + 24 * 60 * 60 * 1000);
+    at = berlinToUtc(p.y, p.m, p.d, h, min);
+  } else if (at <= now && kind === "date") { // Datum ohne Jahr schon vorbei -> nächstes Jahr
+    at = berlinToUtc(y + 1, mo, d, h, min);
+  }
+  if (at <= now) return "❌ Die Startzeit liegt in der Vergangenheit.";
+  if (at > now + 366 * 24 * 60 * 60 * 1000) return "❌ Die Startzeit liegt mehr als ein Jahr in der Zukunft.";
+  return at;
+}
+
+// Läuft jede Minute (Cron): fällige Events anpingen und aus der Liste nehmen
+async function runEventReminders(env) {
+  if (!env.EVENTS_KV) return;
+  const list = (await env.EVENTS_KV.get(SCHEDULE_KEY, "json")) || [];
+  const now = Date.now();
+  const due = list.filter(e => e.startAt <= now);
+  if (!due.length) return;
+  await env.EVENTS_KV.put(SCHEDULE_KEY, JSON.stringify(list.filter(e => e.startAt > now)));
+  for (const e of due) {
+    if (now - e.startAt > 30 * 60 * 1000) continue; // mehr als 30 Minuten verpasst: nicht mehr pingen
+    try {
+      await discord(env, `/channels/${e.channelId}/messages`, "POST", {
+        content: `🔔 <@&${e.roleId}> **${e.title}** startet jetzt!`,
+        message_reference: { message_id: e.messageId, fail_if_not_exists: false },
+        allowed_mentions: { roles: [e.roleId] },
+      });
+    } catch (err) {
+      console.error("Event-Erinnerung fehlgeschlagen:", err);
+    }
+  }
+}
+
+// Discord-Anfrage, die bei "zu viele Anfragen" (429) kurz wartet und es erneut versucht
+async function discordPatient(env, path, method) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(API + path, { method, headers: { Authorization: `Bot ${env.DISCORD_TOKEN}` } });
+    if (res.status !== 429) return res.ok || res.status === 404;
+    const wait = Number((await res.json().catch(() => ({}))).retry_after) || 1;
+    await new Promise(r => setTimeout(r, Math.min(wait, 5) * 1000));
+  }
+  return false;
+}
+
+// "Event beenden": allen Teilnehmern die Rolle wegnehmen, Anmeldung schließen, Erinnerung löschen
+async function handleSignupEnd(interaction, env) {
+  const [, channelId, messageId] = interaction.data.custom_id.split(":");
+  const message = await discord(env, `/channels/${channelId}/messages/${messageId}`, "GET");
+  const creatorId = signupCreator(message);
+  if (!(await canManageSignup(interaction, env, creatorId))) {
+    return "❌ Beenden darf nur, wer das Event erstellt hat, oder das Team.";
+  }
+  const { roleId, limit } = signupSettings(message);
+  const ids = signupIds(message);
+  const started = Date.now();
+  let removed = 0, failed = 0, skipped = 0;
+  for (const id of ids) {
+    if (Date.now() - started > 20000) { skipped++; continue; } // Zeitlimit des Workers
+    if (await discordPatient(env, `/guilds/${interaction.guild_id}/members/${id}/roles/${roleId}`, "DELETE")) removed++;
+    else failed++;
+  }
+  const embed = message.embeds?.[0] ?? {};
+  await discord(env, `/channels/${channelId}/messages/${messageId}`, "PATCH", {
+    ...signupMessage({ title: embed.title, description: embed.description, roleId, limit, ids, creatorId, ended: true }),
+    allowed_mentions: { parse: [] },
+  });
+  if (env.EVENTS_KV) {
+    const list = (await env.EVENTS_KV.get(SCHEDULE_KEY, "json")) || [];
+    if (list.some(e => e.messageId === messageId)) {
+      await env.EVENTS_KV.put(SCHEDULE_KEY, JSON.stringify(list.filter(e => e.messageId !== messageId)));
+    }
+  }
+  return `🏁 **${embed.title || "Event"}** beendet. <@&${roleId}> wurde ${removed} von ${ids.length} Teilnehmern entfernt.` +
+    (failed ? `\n⚠️ Bei ${failed} hat es nicht geklappt.` : "") +
+    (skipped ? `\n⏳ ${skipped} sind noch übrig – bitte „Event beenden“ noch einmal drücken.` : "");
 }
 
 // --- Discord-Login und Tierlist -------------------------------------------
