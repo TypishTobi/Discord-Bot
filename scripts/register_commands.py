@@ -1,4 +1,4 @@
-"""Registriert die Slash-Befehle /mcname und /login auf dem Server (einmalig bzw. nach Änderungen).
+"""Registriert die Slash-Befehle /mcname, /login und /anmeldung auf dem Server (einmalig bzw. nach Änderungen).
 
 Aufruf:  python3 scripts/register_commands.py
 Umgebungsvariablen: DISCORD_TOKEN, GUILD_ID
@@ -43,6 +43,22 @@ COMMANDS = [{
     "description": "Einmal-Code für den Team-Login auf der Website (Tierlist)",
     "default_member_permissions": None,
     "contexts": [0],
+}, {
+    # Nur im Steuer-Kanal nutzbar (prüft der Worker, ANMELDUNG_CHANNEL_ID)
+    "name": "anmeldung",
+    "description": "Anmeldung mit Rolle in einen anderen Kanal schicken",
+    "default_member_permissions": None,
+    "contexts": [0],
+    "options": [
+        {"type": 7, "name": "kanal", "description": "Wohin die Anmeldung geschickt wird",
+         "required": True, "channel_types": [0, 5]},
+        {"type": 8, "name": "rolle", "description": "Rolle, die man beim Eintragen bekommt", "required": True},
+        {"type": 3, "name": "titel", "description": "Überschrift der Anmeldung",
+         "required": True, "max_length": 100},
+        {"type": 4, "name": "limit", "description": "Höchstens so viele Personen (leer = ohne Limit)",
+         "min_value": 1, "max_value": 200},
+        {"type": 3, "name": "text", "description": "Beschreibung (\\n für neue Zeile)", "max_length": 1500},
+    ],
 }]
 
 

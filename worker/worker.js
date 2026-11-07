@@ -21,6 +21,7 @@
 //   TIER_CHANNEL_ID     Optional; Kanal für Tier-Einträge und Login-Codes (Standard: MC_CHANNEL_ID)
 //   SITE_URL            Optional; Adresse der Website (Standard siehe unten)
 //   SESSION_SECRET      Optional; Schlüssel für Website-Sitzungen (Standard: Bot-Token)
+//   ANMELDUNG_CHANNEL_ID Optional; Kanal, in dem /anmeldung erlaubt ist (Standard siehe unten)
 //
 // Team-Login: /login in Discord liefert einen Einmal-Code (nur für den Nutzer sichtbar,
 // 10 Minuten gültig), der als "login:<code>:<discordId>:<ablauf>" im Tier-Kanal liegt.
@@ -159,6 +160,16 @@ export default {
     if (interaction.type === 2 && interaction.data.name === "login") {
       ctx.waitUntil(respond(interaction, () => handleLogin(interaction, env)));
       return json({ type: 5, data: { flags: EPHEMERAL } });
+    }
+
+    // Anmeldungen mit Rolle: Befehl im Steuer-Kanal und Knöpfe an den Anmelde-Nachrichten
+    if (interaction.type === 2 && interaction.data.name === "anmeldung") {
+      ctx.waitUntil(respond(interaction, () => handleSignupCommand(interaction, env)));
+      return json({ type: 5, data: { flags: EPHEMERAL } });
+    }
+    if (interaction.type === 3 && interaction.data.custom_id.startsWith("signup:")) {
+      ctx.waitUntil(handleSignupButton(interaction, env));
+      return json({ type: 6 }); // Nachricht wird gleich aktualisiert
     }
 
     return json({ type: 4, data: { content: "Unbekannte Aktion.", flags: EPHEMERAL } });
@@ -751,6 +762,161 @@ function rolesReachMin(env, roles, memberRoleIds) {
   const min = position.get(minRole);
   if (min === undefined) throw new Error("MIN_ROLE_ID ist keine Rolle dieses Servers");
   return memberRoleIds.some(id => (position.get(id) ?? -1) >= min);
+}
+
+// --- Anmeldungen mit Rolle (/anmeldung) --------------------------------------
+// Nur im Steuer-Kanal (ANMELDUNG_CHANNEL_ID) nutzbar: schickt in einen anderen Kanal eine
+// Nachricht mit "Eintragen"/"Austragen". Wer sich einträgt, bekommt die festgelegte Rolle,
+// bis das Limit voll ist. Die Teilnehmer stehen in der Nachricht selbst (kein Speicher nötig);
+// Rolle und Limit stecken in der custom_id der Knöpfe ("signup:join:<rolle>:<limit>").
+
+const DEFAULT_ANMELDUNG_CHANNEL_ID = "1568598689839059005";
+const MAX_SIGNUPS = 200; // mehr Erwähnungen passen nicht in eine Discord-Nachricht
+// Rollen mit diesen Rechten darf /anmeldung nicht verteilen: Kick, Ban, Admin, Kanäle, Server,
+// Nachrichten verwalten, @everyone erwähnen, Nicknames, Rollen, Webhooks, Emojis, Timeout
+const DANGEROUS_PERMISSIONS = [1n, 2n, 3n, 4n, 5n, 13n, 17n, 27n, 28n, 29n, 30n, 40n]
+  .reduce((all, bit) => all | (1n << bit), 0n);
+
+async function handleSignupCommand(interaction, env) {
+  const controlChannel = (env.ANMELDUNG_CHANNEL_ID || DEFAULT_ANMELDUNG_CHANNEL_ID).trim();
+  if (interaction.channel_id !== controlChannel) {
+    return `❌ Diesen Befehl kannst du nur in <#${controlChannel}> benutzen.`;
+  }
+  const option = name => interaction.data.options?.find(o => o.name === name)?.value;
+  const channelId = String(option("kanal"));
+  const roleId = String(option("rolle"));
+  const title = String(option("titel") ?? "").trim().slice(0, 100);
+  const text = String(option("text") ?? "").replace(/\\n/g, "\n").trim().slice(0, 1500);
+  const limit = Math.max(0, Math.min(MAX_SIGNUPS, Number(option("limit")) || 0));
+  const guildId = interaction.guild_id;
+  const userId = interaction.member.user.id;
+
+  const [guild, roles, botMember] = await Promise.all([
+    discord(env, `/guilds/${guildId}`, "GET"),
+    discord(env, `/guilds/${guildId}/roles`, "GET"),
+    discord(env, `/guilds/${guildId}/members/${interaction.application_id}`, "GET"),
+  ]);
+  const role = roles.find(r => r.id === roleId);
+  if (!role || role.id === guildId || role.managed) {
+    return "❌ Diese Rolle kann nicht vergeben werden (@everyone oder von einer App verwaltet).";
+  }
+  if (BigInt(role.permissions) & DANGEROUS_PERMISSIONS) {
+    return `❌ <@&${roleId}> hat Moderations- oder Admin-Rechte und kann deshalb nicht über eine Anmeldung vergeben werden.`;
+  }
+  const position = new Map(roles.map(r => [r.id, r.position]));
+  const top = ids => Math.max(-1, ...ids.map(id => position.get(id) ?? -1));
+  if (guild.owner_id !== userId && role.position >= top(interaction.member.roles)) {
+    return `❌ <@&${roleId}> steht über oder gleich deiner höchsten Rolle. Du kannst nur Rollen unter deiner eigenen vergeben.`;
+  }
+  if (role.position >= top(botMember.roles)) {
+    return `❌ Der Bot kann <@&${roleId}> nicht vergeben: Die Rolle muss in den Server-Einstellungen unter der Rolle des Bots stehen.`;
+  }
+
+  let message;
+  try {
+    message = await discord(env, `/channels/${channelId}/messages`, "POST", {
+      ...signupMessage({ title, text, roleId, limit, ids: [] }),
+      allowed_mentions: { parse: [] },
+    });
+  } catch (err) {
+    console.error(err);
+    return `❌ Ich konnte in <#${channelId}> nichts senden. Der Bot braucht dort die Rechte „Kanal ansehen“, „Nachrichten senden“ und „Links einbetten“.`;
+  }
+  const link = `https://discord.com/channels/${guildId}/${channelId}/${message.id}`;
+  return `✅ Anmeldung „${title}“ in <#${channelId}> gesendet: ${link}\n` +
+    `Wer sich einträgt, bekommt <@&${roleId}>` + (limit ? ` (höchstens ${limit} Personen).` : " (ohne Limit).");
+}
+
+// Nachricht samt Knöpfen aus Titel, Text, Rolle, Limit und Teilnehmern bauen
+function signupMessage({ title, text, roleId, limit, ids, description }) {
+  const full = ids.length >= (limit || MAX_SIGNUPS);
+  const desc = description ?? ((text ? text + "\n\n" : "") + `**Rolle:** <@&${roleId}>` + (limit ? `\n**Plätze:** ${limit}` : ""));
+  const fields = [];
+  let chunk = "";
+  for (const line of ids.map((id, i) => `${i + 1}. <@${id}>`)) {
+    if (chunk.length + line.length + 1 > 1024) { fields.push(chunk); chunk = ""; }
+    chunk += (chunk ? "\n" : "") + line;
+  }
+  if (chunk) fields.push(chunk);
+  const head = `Angemeldet (${ids.length}${limit ? "/" + limit : ""})`;
+  return {
+    embeds: [{
+      title,
+      description: desc,
+      color: full ? 0x62789a : 0x6fd8f7,
+      fields: (fields.length ? fields : ["Noch niemand – sei der Erste!"]).map((value, i) => ({ name: i ? "​" : head, value })),
+      footer: full ? { text: "Alle Plätze sind vergeben." } : undefined,
+    }],
+    components: [{
+      type: 1,
+      components: [
+        { type: 2, style: 3, custom_id: `signup:join:${roleId}:${limit}`, label: full ? "Voll" : "Eintragen", emoji: { name: "✅" }, disabled: full },
+        { type: 2, style: 2, custom_id: `signup:leave:${roleId}:${limit}`, label: "Austragen" },
+      ],
+    }],
+  };
+}
+
+function signupIds(message) {
+  const ids = [];
+  for (const field of message.embeds?.[0]?.fields ?? []) {
+    for (const m of String(field.value).matchAll(/<@!?(\d+)>/g)) if (!ids.includes(m[1])) ids.push(m[1]);
+  }
+  return ids;
+}
+
+// Klick auf Eintragen/Austragen: Rolle geben/nehmen, Liste in der Nachricht aktualisieren,
+// Rückmeldung nur für den Klickenden
+async function handleSignupButton(interaction, env) {
+  const [, action, roleId, limitText] = interaction.data.custom_id.split(":");
+  const limit = Number(limitText) || 0;
+  const userId = interaction.member.user.id;
+  const reply = content => fetch(`${API}/webhooks/${interaction.application_id}/${interaction.token}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, flags: EPHEMERAL, allowed_mentions: { parse: [] } }),
+  });
+  try {
+    // Aktuellen Stand holen, falls sich gerade jemand anderes eingetragen hat
+    const message = await discord(env, `/channels/${interaction.channel_id}/messages/${interaction.message.id}`, "GET")
+      .catch(() => interaction.message);
+    const ids = signupIds(message);
+    const embed = message.embeds?.[0] ?? {};
+    const rolePath = `/guilds/${interaction.guild_id}/members/${userId}/roles/${roleId}`;
+
+    if (action === "join") {
+      if (ids.includes(userId)) return reply(`ℹ️ Du bist schon eingetragen und hast <@&${roleId}>.`);
+      if (ids.length >= (limit || MAX_SIGNUPS)) return reply("❌ Leider sind schon alle Plätze vergeben.");
+      try {
+        await discord(env, rolePath, "PUT");
+      } catch (err) {
+        console.error(err);
+        return reply(`❌ Ich konnte dir <@&${roleId}> nicht geben. Bitte sag dem Team Bescheid (der Bot braucht „Rollen verwalten“ und muss über der Rolle stehen).`);
+      }
+      ids.push(userId);
+    } else if (action === "leave") {
+      if (!ids.includes(userId)) return reply("ℹ️ Du bist nicht eingetragen.");
+      await discord(env, rolePath, "DELETE").catch(err => console.error(err));
+      ids.splice(ids.indexOf(userId), 1);
+    } else {
+      return reply("Unbekannte Aktion.");
+    }
+
+    await fetch(`${API}/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...signupMessage({ title: embed.title, description: embed.description, roleId, limit, ids }),
+        allowed_mentions: { parse: [] },
+      }),
+    });
+    return reply(action === "join"
+      ? `✅ Du bist eingetragen und hast jetzt <@&${roleId}>.`
+      : `👋 Du bist ausgetragen, <@&${roleId}> wurde entfernt.`);
+  } catch (err) {
+    console.error(err);
+    return reply("⚠️ Das hat gerade nicht geklappt. Bitte versuche es gleich noch einmal.");
+  }
 }
 
 // --- Discord-Login und Tierlist -------------------------------------------
@@ -1390,7 +1556,7 @@ async function discord(env, path, method, payload) {
     body: payload === undefined ? undefined : JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`Discord-API ${res.status} bei ${path}: ${await res.text()}`);
-  return res.json();
+  return res.status === 204 ? null : res.json(); // z. B. Rolle geben/nehmen liefert keinen Inhalt
 }
 
 async function verifySignature(publicKey, signature, timestamp, body) {
