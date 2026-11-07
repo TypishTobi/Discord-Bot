@@ -175,6 +175,17 @@ export default {
       ctx.waitUntil(respond(interaction, () => handleSignupSubmit(interaction, env)));
       return json({ type: 5, data: { flags: EPHEMERAL } });
     }
+    if (interaction.type === 3 && interaction.data.custom_id.startsWith("eventping:")) {
+      return handleEventPing(interaction, env, ctx);
+    }
+    if (interaction.type === 3 && interaction.data.custom_id.startsWith("signup:manage:")) {
+      ctx.waitUntil(respond(interaction, () => handleSignupManage(interaction, env)));
+      return json({ type: 5, data: { flags: EPHEMERAL } });
+    }
+    if (interaction.type === 3 && interaction.data.custom_id.startsWith("signupmod:")) {
+      ctx.waitUntil(respond(interaction, () => handleSignupModeration(interaction, env)));
+      return json({ type: 5, data: { flags: EPHEMERAL } });
+    }
     if (interaction.type === 3 && interaction.data.custom_id.startsWith("signup:")) {
       ctx.waitUntil(handleSignupButton(interaction, env));
       return json({ type: 6 }); // Nachricht wird gleich aktualisiert
@@ -856,23 +867,100 @@ async function handleSignupSubmit(interaction, env) {
     return `❌ Der Bot kann <@&${roleId}> nicht vergeben: Die Rolle muss in den Server-Einstellungen unter der Rolle des Bots stehen.`;
   }
 
+  const draft = { guildId, channelId, roleId, title, text, limit, creatorId: userId, roles: [], users: [], everyone: false, here: false };
+  if (!env.EVENTS_KV) return postSignup(env, draft); // ohne Speicher kein Ping-Schritt
+  const draftId = interaction.id;
+  await env.EVENTS_KV.put(`eventdraft:${draftId}`, JSON.stringify(draft), { expirationTtl: 3600 });
+  return pingPanel(draftId, draft);
+}
+
+// Anmelde-Nachricht senden (mit den gewählten Pings im Nachrichtentext)
+async function postSignup(env, draft) {
+  const { guildId, channelId, roleId, title, text, limit, creatorId } = draft;
+  const pings = [draft.everyone && "@everyone", draft.here && "@here",
+    ...draft.roles.map(id => `<@&${id}>`), ...draft.users.map(id => `<@${id}>`)].filter(Boolean);
   let message;
   try {
     message = await discord(env, `/channels/${channelId}/messages`, "POST", {
-      ...signupMessage({ title, text, roleId, limit, ids: [] }),
-      allowed_mentions: { parse: [] },
+      ...(pings.length ? { content: pings.join(" ") } : {}),
+      ...signupMessage({ title, text, roleId, limit, ids: [], creatorId }),
+      allowed_mentions: { parse: draft.everyone || draft.here ? ["everyone"] : [], roles: draft.roles, users: draft.users },
     });
   } catch (err) {
     console.error(err);
-    return `❌ Ich konnte in <#${channelId}> nichts senden. Der Bot braucht dort die Rechte „Kanal ansehen“, „Nachrichten senden“ und „Links einbetten“.`;
+    return `❌ Ich konnte in <#${channelId}> nichts senden. Der Bot braucht dort die Rechte „Kanal ansehen“, „Nachrichten senden“ und „Links einbetten“` +
+      (pings.length ? " (für @everyone oder nicht erwähnbare Rollen auch „Alle erwähnen“)." : ".");
   }
   const link = `https://discord.com/channels/${guildId}/${channelId}/${message.id}`;
   return `✅ Anmeldung „${title}“ in <#${channelId}> gesendet: ${link}\n` +
-    `Wer sich einträgt, bekommt <@&${roleId}>` + (limit ? ` (höchstens ${limit} Personen).` : " (ohne Limit).");
+    `Wer sich einträgt, bekommt <@&${roleId}>` + (limit ? ` (höchstens ${limit} Personen).` : " (ohne Limit).") +
+    (pings.length ? `\nGepingt: ${pings.join(" ")}` : "");
+}
+
+// Zweiter Schritt nach dem Fenster: wen pingen? (Rollen/Spieler per Auswahl, @everyone/@here per Knopf)
+function pingPanel(draftId, draft) {
+  const chosen = [draft.everyone && "@everyone", draft.here && "@here",
+    ...draft.roles.map(id => `<@&${id}>`), ...draft.users.map(id => `<@${id}>`)].filter(Boolean);
+  return {
+    content: `📣 **${draft.title}** → <#${draft.channelId}>\nWer soll beim Senden gepingt werden?\n` +
+      `**Ping:** ${chosen.length ? chosen.join(" ") : "niemand"}`,
+    components: [
+      { type: 1, components: [{ type: 7, custom_id: `eventping:pick:${draftId}`, placeholder: "Rollen oder Spieler auswählen …", min_values: 0, max_values: 10,
+        default_values: [...draft.roles.map(id => ({ id, type: "role" })), ...draft.users.map(id => ({ id, type: "user" }))] }] },
+      { type: 1, components: [
+        { type: 2, style: draft.everyone ? 1 : 2, custom_id: `eventping:everyone:${draftId}`, label: draft.everyone ? "@everyone ✓" : "@everyone" },
+        { type: 2, style: draft.here ? 1 : 2, custom_id: `eventping:here:${draftId}`, label: draft.here ? "@here ✓" : "@here" },
+        { type: 2, style: 3, custom_id: `eventping:send:${draftId}`, label: "Senden" },
+        { type: 2, style: 4, custom_id: `eventping:cancel:${draftId}`, label: "Abbrechen" },
+      ] },
+    ],
+  };
+}
+
+async function handleEventPing(interaction, env, ctx) {
+  const [, action, draftId] = interaction.data.custom_id.split(":");
+  const key = `eventdraft:${draftId}`;
+  const draft = env.EVENTS_KV ? await env.EVENTS_KV.get(key, "json") : null;
+  const update = data => json({ type: 7, data: { allowed_mentions: { parse: [] }, ...data } });
+  if (!draft) return update({ content: "⌛ Dieser Entwurf ist abgelaufen. Bitte /event neu starten.", components: [] });
+  if (draft.creatorId !== interaction.member.user.id) {
+    return json({ type: 4, data: { content: "❌ Das ist nicht dein Entwurf.", flags: EPHEMERAL } });
+  }
+  if (action === "cancel") {
+    await env.EVENTS_KV.delete(key);
+    return update({ content: "🗑️ Abgebrochen, es wurde nichts gesendet.", components: [] });
+  }
+  if (action === "send") {
+    ctx.waitUntil((async () => {
+      await env.EVENTS_KV.delete(key);
+      const result = await postSignup(env, draft).catch(err => { console.error(err); return "⚠️ Senden fehlgeschlagen."; });
+      await fetch(`${API}/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: result, components: [], allowed_mentions: { parse: [] } }),
+      });
+    })());
+    return json({ type: 6 });
+  }
+  if (action === "everyone" || action === "here") {
+    // @everyone/@here nur für Leute, die das auf dem Server ohnehin dürfen
+    const perms = BigInt(interaction.member.permissions ?? 0);
+    if (!(perms & ADMINISTRATOR) && !(perms & (1n << 17n))) {
+      return json({ type: 4, data: { content: "❌ Du darfst auf diesem Server nicht @everyone/@here pingen.", flags: EPHEMERAL } });
+    }
+    draft[action] = !draft[action];
+  } else if (action === "pick") {
+    const resolved = interaction.data.resolved ?? {};
+    const values = interaction.data.values ?? [];
+    draft.roles = values.filter(id => resolved.roles?.[id] && id !== draft.guildId);
+    draft.users = values.filter(id => !resolved.roles?.[id]);
+  }
+  await env.EVENTS_KV.put(key, JSON.stringify(draft), { expirationTtl: 3600 });
+  return update(pingPanel(draftId, draft));
 }
 
 // Nachricht samt Knöpfen aus Titel, Text, Rolle, Limit und Teilnehmern bauen
-function signupMessage({ title, text, roleId, limit, ids, description }) {
+function signupMessage({ title, text, roleId, limit, ids, description, creatorId = "" }) {
   const full = ids.length >= (limit || MAX_SIGNUPS);
   const desc = description ?? ((text ? text + "\n\n" : "") + `**Rolle:** <@&${roleId}>` + (limit ? `\n**Plätze:** ${limit}` : ""));
   const fields = [];
@@ -896,6 +984,7 @@ function signupMessage({ title, text, roleId, limit, ids, description }) {
       components: [
         { type: 2, style: 3, custom_id: `signup:join:${roleId}:${limit}`, label: full ? "Voll" : "Eintragen", emoji: { name: "✅" }, disabled: full },
         { type: 2, style: 2, custom_id: `signup:leave:${roleId}:${limit}`, label: "Austragen" },
+        { type: 2, style: 2, custom_id: `signup:manage:${roleId}:${limit}:${creatorId}`, label: "Verwalten", emoji: { name: "⚙️" } },
       ],
     }],
   };
@@ -930,6 +1019,7 @@ async function handleSignupButton(interaction, env) {
 
     if (action === "join") {
       if (ids.includes(userId)) return reply(`ℹ️ Du bist schon eingetragen und hast <@&${roleId}>.`);
+      if ((await signupBans(env, message.id)).includes(userId)) return reply("🚫 Du wurdest von diesem Event ausgeschlossen.");
       if (ids.length >= (limit || MAX_SIGNUPS)) return reply("❌ Leider sind schon alle Plätze vergeben.");
       try {
         await discord(env, rolePath, "PUT");
@@ -950,7 +1040,7 @@ async function handleSignupButton(interaction, env) {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        ...signupMessage({ title: embed.title, description: embed.description, roleId, limit, ids }),
+        ...signupMessage({ title: embed.title, description: embed.description, roleId, limit, ids, creatorId: signupCreator(message) }),
         allowed_mentions: { parse: [] },
       }),
     });
@@ -961,6 +1051,105 @@ async function handleSignupButton(interaction, env) {
     console.error(err);
     return reply("⚠️ Das hat gerade nicht geklappt. Bitte versuche es gleich noch einmal.");
   }
+}
+
+// --- Event verwalten: Teilnehmer kicken oder bannen --------------------------
+// Der Knopf "Verwalten" öffnet nur für den Ersteller und das Team (ab MIN_ROLE_ID) ein
+// privates Menü. Kicken = austragen + Rolle weg (darf sich neu eintragen), Bannen = zusätzlich
+// gesperrt für dieses Event. Gesperrte stehen in Cloudflare KV unter "eventban:<nachricht>".
+
+function signupCreator(message) {
+  const button = (message.components ?? []).flatMap(row => row.components ?? [])
+    .find(c => String(c.custom_id).startsWith("signup:manage:"));
+  return button ? button.custom_id.split(":")[4] || "" : "";
+}
+
+function signupSettings(message) {
+  const join = (message.components ?? []).flatMap(row => row.components ?? [])
+    .find(c => String(c.custom_id).startsWith("signup:join:"));
+  const [, , roleId, limit] = join ? join.custom_id.split(":") : [];
+  return { roleId, limit: Number(limit) || 0 };
+}
+
+async function signupBans(env, messageId) {
+  if (!env.EVENTS_KV) return [];
+  return (await env.EVENTS_KV.get(`eventban:${messageId}`, "json")) || [];
+}
+
+async function canManageSignup(interaction, env, creatorId) {
+  const userId = interaction.member.user.id;
+  return (creatorId && creatorId === userId) || isTeam(interaction, env);
+}
+
+async function handleSignupManage(interaction, env) {
+  const message = interaction.message;
+  if (!(await canManageSignup(interaction, env, signupCreator(message)))) {
+    return "❌ Verwalten darf nur, wer das Event erstellt hat, oder das Team.";
+  }
+  const title = message.embeds?.[0]?.title || "Event";
+  const select = (action, placeholder) => ({
+    type: 1,
+    components: [{ type: 5, custom_id: `signupmod:${action}:${interaction.channel_id}:${message.id}`, placeholder, min_values: 1, max_values: 10 }],
+  });
+  return {
+    content: `⚙️ **${title}** verwalten\n` +
+      "-# Kicken: austragen und Rolle entfernen (kann sich neu eintragen). " +
+      "Bannen: zusätzlich für dieses Event gesperrt.",
+    components: [
+      select("kick", "👢 Teilnehmer kicken …"),
+      select("ban", "🚫 Teilnehmer bannen …"),
+      select("unban", "✅ Bann aufheben …"),
+    ],
+  };
+}
+
+async function handleSignupModeration(interaction, env) {
+  const [, action, channelId, messageId] = interaction.data.custom_id.split(":");
+  const message = await discord(env, `/channels/${channelId}/messages/${messageId}`, "GET");
+  const creatorId = signupCreator(message);
+  if (!(await canManageSignup(interaction, env, creatorId))) {
+    return "❌ Verwalten darf nur, wer das Event erstellt hat, oder das Team.";
+  }
+  if ((action === "ban" || action === "unban") && !env.EVENTS_KV) {
+    return "❌ Bannen braucht den KV-Speicher EVENTS_KV im Worker.";
+  }
+  const { roleId, limit } = signupSettings(message);
+  const ids = signupIds(message);
+  const bans = await signupBans(env, messageId);
+  const targets = [...new Set(interaction.data.values ?? [])];
+  const kicked = [], notIn = [], banned = [], unbanned = [], notBanned = [];
+
+  for (const id of targets) {
+    if (action === "unban") {
+      if (bans.includes(id)) { bans.splice(bans.indexOf(id), 1); unbanned.push(id); } else notBanned.push(id);
+      continue;
+    }
+    if (ids.includes(id)) {
+      ids.splice(ids.indexOf(id), 1);
+      kicked.push(id);
+      if (roleId) await discord(env, `/guilds/${interaction.guild_id}/members/${id}/roles/${roleId}`, "DELETE").catch(err => console.error(err));
+    } else if (action === "kick") notIn.push(id);
+    if (action === "ban" && !bans.includes(id)) { bans.push(id); banned.push(id); }
+  }
+
+  if (kicked.length) {
+    const embed = message.embeds?.[0] ?? {};
+    await discord(env, `/channels/${channelId}/messages/${messageId}`, "PATCH", {
+      ...signupMessage({ title: embed.title, description: embed.description, roleId, limit, ids, creatorId }),
+      allowed_mentions: { parse: [] },
+    });
+  }
+  if (banned.length || unbanned.length) await env.EVENTS_KV.put(`eventban:${messageId}`, JSON.stringify(bans));
+
+  const list = arr => arr.map(id => `<@${id}>`).join(", ");
+  const lines = [];
+  if (action === "kick" && kicked.length) lines.push(`👢 Gekickt: ${list(kicked)}`);
+  if (action === "ban" && banned.length) lines.push(`🚫 Gebannt: ${list(banned)}` + (kicked.length ? " (aus der Liste entfernt)" : ""));
+  if (action === "ban" && !banned.length) lines.push("ℹ️ Die Ausgewählten waren schon gebannt.");
+  if (notIn.length) lines.push(`ℹ️ Nicht eingetragen: ${list(notIn)}`);
+  if (unbanned.length) lines.push(`✅ Bann aufgehoben: ${list(unbanned)}`);
+  if (notBanned.length) lines.push(`ℹ️ Nicht gebannt: ${list(notBanned)}`);
+  return lines.join("\n") || "Nichts geändert.";
 }
 
 // --- Discord-Login und Tierlist -------------------------------------------
