@@ -189,6 +189,17 @@ export default {
       ctx.waitUntil(respond(interaction, () => handleSignupManage(interaction, env)));
       return json({ type: 5, data: { flags: EPHEMERAL } });
     }
+    if (interaction.type === 3 && interaction.data.custom_id.startsWith("signupedit:")) {
+      return openSignupEdit(interaction, env); // Fenster muss sofort kommen
+    }
+    if (interaction.type === 5 && interaction.data.custom_id.startsWith("signupedit:")) {
+      ctx.waitUntil(respond(interaction, () => handleSignupEdit(interaction, env)));
+      return json({ type: 5, data: { flags: EPHEMERAL } });
+    }
+    if (interaction.type === 3 && interaction.data.custom_id.startsWith("signupstart:")) {
+      ctx.waitUntil(respond(interaction, () => handleSignupStartNow(interaction, env)));
+      return json({ type: 5, data: { flags: EPHEMERAL } });
+    }
     if (interaction.type === 3 && interaction.data.custom_id.startsWith("signupend:")) {
       ctx.waitUntil(respond(interaction, () => handleSignupEnd(interaction, env)));
       return json({ type: 5, data: { flags: EPHEMERAL } });
@@ -920,6 +931,9 @@ async function postSignup(env, draft) {
     return `❌ Ich konnte in <#${channelId}> nichts senden. Der Bot braucht dort die Rechte „Kanal ansehen“, „Nachrichten senden“ und „Links einbetten“` +
       (pings.length ? " (für @everyone oder nicht erwähnbare Rollen auch „Alle erwähnen“)." : ".");
   }
+  if (env.EVENTS_KV && draft.pingChannelId && draft.pingChannelId !== channelId) {
+    await env.EVENTS_KV.put(`eventpingch:${message.id}`, draft.pingChannelId);
+  }
   if (startAt && env.EVENTS_KV) {
     const list = (await env.EVENTS_KV.get(SCHEDULE_KEY, "json")) || [];
     list.push({ messageId: message.id, channelId, roleId, title, startAt, guildId, pingChannelId: draft.pingChannelId || channelId });
@@ -1009,8 +1023,7 @@ async function handleEventPing(interaction, env, ctx) {
 // Nachricht samt Knöpfen aus Titel, Text, Rolle, Limit und Teilnehmern bauen
 function signupMessage({ title, text, roleId, limit, ids, description, creatorId = "", startAt = 0, ended = false }) {
   const full = ids.length >= (limit || MAX_SIGNUPS);
-  const start = startAt ? `\n**Start:** <t:${Math.floor(startAt / 1000)}:F> (<t:${Math.floor(startAt / 1000)}:R>)` : "";
-  const desc = description ?? ((text ? text + "\n\n" : "") + `**Rolle:** <@&${roleId}>` + (limit ? `\n**Plätze:** ${limit}` : "") + start);
+  const desc = description ?? signupDescription({ text, roleId, limit, startAt });
   const fields = [];
   let chunk = "";
   for (const line of ids.map((id, i) => `${i + 1}. <@${id}>`)) {
@@ -1148,7 +1161,11 @@ async function handleSignupManage(interaction, env) {
       select("kick", "👢 Teilnehmer kicken …"),
       select("ban", "🚫 Teilnehmer bannen …"),
       select("unban", "✅ Bann aufheben …"),
-      { type: 1, components: [{ type: 2, style: 4, custom_id: `signupend:${interaction.channel_id}:${message.id}`, label: "Event beenden & Rollen entfernen", emoji: { name: "🏁" } }] },
+      { type: 1, components: [
+        { type: 2, style: 1, custom_id: `signupedit:${interaction.channel_id}:${message.id}`, label: "Bearbeiten", emoji: { name: "✏️" } },
+        { type: 2, style: 3, custom_id: `signupstart:${interaction.channel_id}:${message.id}`, label: "Jetzt starten", emoji: { name: "▶️" } },
+        { type: 2, style: 4, custom_id: `signupend:${interaction.channel_id}:${message.id}`, label: "Beenden & Rollen entfernen", emoji: { name: "🏁" } },
+      ] },
     ],
   };
 }
@@ -1265,14 +1282,7 @@ async function runEventReminders(env) {
   for (const e of due) {
     if (now - e.startAt > 30 * 60 * 1000) continue; // mehr als 30 Minuten verpasst: nicht mehr pingen
     try {
-      // Im Kanal der Anmeldung als Antwort darauf, in einem anderen Kanal mit Link zur Anmeldung
-      const target = e.pingChannelId || e.channelId, same = target === e.channelId;
-      const link = e.guildId ? `https://discord.com/channels/${e.guildId}/${e.channelId}/${e.messageId}` : `<#${e.channelId}>`;
-      await discord(env, `/channels/${target}/messages`, "POST", {
-        content: `🔔 <@&${e.roleId}> **${e.title}** startet jetzt!` + (same ? "" : `\n${link}`),
-        ...(same ? { message_reference: { message_id: e.messageId, fail_if_not_exists: false } } : {}),
-        allowed_mentions: { roles: [e.roleId] },
-      });
+      await sendStartPing(env, e);
     } catch (err) {
       console.error("Event-Erinnerung fehlgeschlagen:", err);
     }
@@ -1321,6 +1331,167 @@ async function handleSignupEnd(interaction, env) {
   return `🏁 **${embed.title || "Event"}** beendet. <@&${roleId}> wurde ${removed} von ${ids.length} Teilnehmern entfernt.` +
     (failed ? `\n⚠️ Bei ${failed} hat es nicht geklappt.` : "") +
     (skipped ? `\n⏳ ${skipped} sind noch übrig – bitte „Event beenden“ noch einmal drücken.` : "");
+}
+
+// Im Kanal der Anmeldung als Antwort darauf, in einem anderen Kanal mit Link zur Anmeldung
+async function sendStartPing(env, e) {
+  const target = e.pingChannelId || e.channelId, same = target === e.channelId;
+  const link = e.guildId ? `https://discord.com/channels/${e.guildId}/${e.channelId}/${e.messageId}` : `<#${e.channelId}>`;
+  await discord(env, `/channels/${target}/messages`, "POST", {
+    content: `🔔 <@&${e.roleId}> **${e.title}** startet jetzt!` + (same ? "" : `\n${link}`),
+    ...(same ? { message_reference: { message_id: e.messageId, fail_if_not_exists: false } } : {}),
+    allowed_mentions: { roles: [e.roleId] },
+  });
+  return target;
+}
+
+// --- Event bearbeiten und direkt starten ------------------------------------
+
+// Beschreibung der Anmeldung: eigener Text, darunter Rolle, Plätze und Startzeit
+function signupDescription({ text, roleId, limit, startAt, started = false }) {
+  const sec = Math.floor((startAt || 0) / 1000);
+  const start = startAt ? `\n**Start:** <t:${sec}:F> (${started ? "gestartet" : `<t:${sec}:R>`})` : "";
+  return (text ? text + "\n\n" : "") + `**Rolle:** <@&${roleId}>` + (limit ? `\n**Plätze:** ${limit}` : "") + start;
+}
+
+// Eigenen Text und Startzeit aus einer bestehenden Beschreibung zurückgewinnen
+function parseSignupDescription(description) {
+  const desc = String(description ?? "");
+  const cut = desc.startsWith("**Rolle:**") ? 0 : desc.lastIndexOf("\n\n**Rolle:**");
+  const text = cut > 0 ? desc.slice(0, cut) : cut === 0 ? "" : desc;
+  const m = desc.slice(Math.max(cut, 0)).match(/\*\*Start:\*\* <t:(\d+):F>/);
+  return { text, startAt: m ? Number(m[1]) * 1000 : 0, started: /\(gestartet\)/.test(desc) };
+}
+
+function formatBerlin(ms) {
+  const p = berlinParts(ms), two = n => String(n).padStart(2, "0");
+  return `${two(p.d)}.${two(p.m)}.${p.y} ${two(p.h)}:${two(p.min)}`;
+}
+
+// Kanal für den Start-Ping: geplante Erinnerung, sonst gemerkter Kanal, sonst Kanal der Anmeldung
+async function pingChannelOf(env, messageId, channelId, entry) {
+  if (entry?.pingChannelId) return entry.pingChannelId;
+  return (env.EVENTS_KV && await env.EVENTS_KV.get(`eventpingch:${messageId}`)) || channelId;
+}
+
+async function scheduleOf(env, messageId) {
+  if (!env.EVENTS_KV) return { list: [], entry: null };
+  const list = (await env.EVENTS_KV.get(SCHEDULE_KEY, "json")) || [];
+  return { list, entry: list.find(e => e.messageId === messageId) || null };
+}
+
+// Klick auf "Bearbeiten": Fenster mit den aktuellen Werten öffnen
+async function openSignupEdit(interaction, env) {
+  const [, channelId, messageId] = interaction.data.custom_id.split(":");
+  const deny = text => json({ type: 4, data: { content: text, flags: EPHEMERAL } });
+  let message;
+  try {
+    message = await discord(env, `/channels/${channelId}/messages/${messageId}`, "GET");
+  } catch {
+    return deny("❌ Die Anmeldung gibt es nicht mehr.");
+  }
+  if (!(await canManageSignup(interaction, env, signupCreator(message)).catch(() => false))) {
+    return deny("❌ Bearbeiten darf nur, wer das Event erstellt hat, oder das Team.");
+  }
+  const embed = message.embeds?.[0] ?? {};
+  const { text, startAt } = parseSignupDescription(embed.description);
+  const { limit } = signupSettings(message);
+  const pingChannelId = await pingChannelOf(env, messageId, channelId, (await scheduleOf(env, messageId)).entry);
+  const label = (name, description, component) => ({ type: 18, label: name, description, component });
+  return json({
+    type: 9,
+    data: {
+      custom_id: `signupedit:${channelId}:${messageId}`,
+      title: "Event bearbeiten",
+      components: [
+        label("Titel", undefined, { type: 4, custom_id: "titel", style: 1, max_length: 100, required: true, value: String(embed.title || "").slice(0, 100) }),
+        label("Beschreibung", "Optional", { type: 4, custom_id: "text", style: 2, max_length: 1500, required: false, ...(text ? { value: text.slice(0, 1500) } : {}) }),
+        label("Startzeit", "Leer = keine Startzeit und kein Start-Ping", { type: 4, custom_id: "start", style: 1, max_length: 20, required: false,
+          placeholder: "z. B. 20.11. 18:00", ...(startAt > Date.now() ? { value: formatBerlin(startAt) } : {}) }),
+        label("Limit", `Leer oder 0 = ohne Limit, höchstens ${MAX_SIGNUPS}`, { type: 4, custom_id: "limit", style: 1, max_length: 3, required: false,
+          ...(limit ? { value: String(limit) } : {}) }),
+        label("Kanal für den Start-Ping", undefined, { type: 8, custom_id: "pingkanal", channel_types: [0, 5], min_values: 1, max_values: 1,
+          default_values: [{ id: pingChannelId, type: "channel" }] }),
+      ],
+    },
+  });
+}
+
+// Fenster "Event bearbeiten" abgeschickt: Nachricht und Erinnerung anpassen
+async function handleSignupEdit(interaction, env) {
+  const [, channelId, messageId] = interaction.data.custom_id.split(":");
+  const message = await discord(env, `/channels/${channelId}/messages/${messageId}`, "GET");
+  const creatorId = signupCreator(message);
+  if (!(await canManageSignup(interaction, env, creatorId))) {
+    return "❌ Bearbeiten darf nur, wer das Event erstellt hat, oder das Team.";
+  }
+  const v = modalValues(interaction);
+  const title = String(v.titel ?? "").trim().slice(0, 100);
+  if (!title) return "❌ Der Titel darf nicht leer sein.";
+  const text = String(v.text ?? "").trim().slice(0, 1500);
+  const limitText = String(v.limit ?? "").trim();
+  if (limitText && !/^\d+$/.test(limitText)) return "❌ Beim Limit bitte nur eine Zahl eintragen (oder leer lassen).";
+  const limit = Number(limitText) || 0;
+  if (limit > MAX_SIGNUPS) return `❌ Das Limit darf höchstens ${MAX_SIGNUPS} sein.`;
+  let startAt = 0;
+  if (String(v.start ?? "").trim()) {
+    startAt = parseStartTime(v.start, Date.now());
+    if (typeof startAt === "string") return startAt;
+  }
+
+  const { roleId, ended } = signupSettings(message);
+  const ids = signupIds(message);
+  await discord(env, `/channels/${channelId}/messages/${messageId}`, "PATCH", {
+    ...signupMessage({ title, description: signupDescription({ text, roleId, limit, startAt }), roleId, limit, ids, creatorId, ended }),
+    allowed_mentions: { parse: [] },
+  });
+
+  // Ping-Kanal merken und Erinnerung neu planen
+  let pingChannelId = channelId;
+  if (env.EVENTS_KV) {
+    const { list, entry } = await scheduleOf(env, messageId);
+    pingChannelId = v.pingkanal || await pingChannelOf(env, messageId, channelId, entry);
+    if (pingChannelId !== channelId) await env.EVENTS_KV.put(`eventpingch:${messageId}`, pingChannelId);
+    else await env.EVENTS_KV.delete(`eventpingch:${messageId}`);
+    const rest = list.filter(e => e.messageId !== messageId);
+    if (startAt && !ended) rest.push({ messageId, channelId, roleId, title, startAt, guildId: interaction.guild_id, pingChannelId });
+    if (entry || (startAt && !ended)) await env.EVENTS_KV.put(SCHEDULE_KEY, JSON.stringify(rest));
+  }
+  return `✏️ **${title}** wurde aktualisiert.` +
+    (startAt ? `\nStart: <t:${Math.floor(startAt / 1000)}:F> – Start-Ping in <#${pingChannelId}>.` : "\nKeine Startzeit (kein Start-Ping).") +
+    (limit && ids.length > limit ? `\n⚠️ Es sind schon ${ids.length} eingetragen, mehr als das neue Limit – niemand wird ausgetragen.` : "");
+}
+
+// "Jetzt starten": sofort pingen, geplante Erinnerung löschen, Startzeit auf jetzt setzen
+async function handleSignupStartNow(interaction, env) {
+  const [, channelId, messageId] = interaction.data.custom_id.split(":");
+  const message = await discord(env, `/channels/${channelId}/messages/${messageId}`, "GET");
+  const creatorId = signupCreator(message);
+  if (!(await canManageSignup(interaction, env, creatorId))) {
+    return "❌ Starten darf nur, wer das Event erstellt hat, oder das Team.";
+  }
+  const { roleId, limit, ended } = signupSettings(message);
+  if (ended) return "🏁 Dieses Event ist schon beendet.";
+  const embed = message.embeds?.[0] ?? {};
+  const { list, entry } = await scheduleOf(env, messageId);
+  const event = { messageId, channelId, roleId, title: embed.title || "Event", guildId: interaction.guild_id,
+    pingChannelId: await pingChannelOf(env, messageId, channelId, entry) };
+  let target;
+  try {
+    target = await sendStartPing(env, event);
+  } catch (err) {
+    console.error(err);
+    return `❌ Der Start-Ping konnte nicht gesendet werden. Der Bot braucht im Kanal „Nachrichten senden“` +
+      " (und für nicht erwähnbare Rollen „Alle erwähnen“).";
+  }
+  if (entry) await env.EVENTS_KV.put(SCHEDULE_KEY, JSON.stringify(list.filter(e => e.messageId !== messageId)));
+  const { text } = parseSignupDescription(embed.description);
+  await discord(env, `/channels/${channelId}/messages/${messageId}`, "PATCH", {
+    ...signupMessage({ title: embed.title, description: signupDescription({ text, roleId, limit, startAt: Date.now(), started: true }),
+      roleId, limit, ids: signupIds(message), creatorId }),
+    allowed_mentions: { parse: [] },
+  });
+  return `▶️ **${event.title}** gestartet – <@&${roleId}> wurde in <#${target}> gepingt.`;
 }
 
 // --- Discord-Login und Tierlist -------------------------------------------
