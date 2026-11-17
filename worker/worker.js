@@ -564,12 +564,14 @@ function buildStaff(env, roles, members, names) {
     const top = m.roles.map(id => teamRoles.get(id)).filter(Boolean).sort((a, b) => b.position - a.position)[0];
     if (!top) continue;
     if (!groups.has(top.id)) {
-      groups.set(top.id, { role: cleanRoleName(top.name), color: top.color ? hexColor(top.color) : null, position: top.position, members: [] });
+      groups.set(top.id, { role: cleanRoleName(top.name), color: top.color ? hexColor(top.color) : null, position: top.position, ranks: [], members: [] });
     }
     const displayName = m.nick || m.user.global_name || m.user.username;
     const bar = displayName.indexOf("|");
     const mc = names.get(m.user.id);
-    groups.get(top.id).members.push({
+    const group = groups.get(top.id);
+    if (bar !== -1) group.ranks.push(displayName.slice(0, bar).trim());
+    group.members.push({
       id: m.user.id,
       name: (bar === -1 ? displayName : displayName.slice(bar + 1)).trim(),
       minecraft: mc?.name ?? null,
@@ -578,13 +580,26 @@ function buildStaff(env, roles, members, names) {
   }
   return [...groups.values()]
     .sort((a, b) => b.position - a.position)
-    .map(({ position, ...g }) => ({ ...g, members: g.members.sort((a, b) => a.name.localeCompare(b.name, "de")) }));
+    .map(({ position, ranks, ...g }) => ({
+      ...g,
+      // Rollenname ohne Buchstaben (z. B. "*"): häufigsten Rang aus den Namen nehmen ("Projektleitung | BNxqz")
+      role: g.role || mostCommon(ranks) || "Team",
+      members: g.members.sort((a, b) => a.name.localeCompare(b.name, "de")),
+    }));
 }
 
-// "🛡️ ┃ Sr. Admin" -> "Sr. Admin"
+function mostCommon(list) {
+  const count = new Map();
+  for (const x of list) if (x) count.set(x, (count.get(x) || 0) + 1);
+  return [...count].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+}
+
+// "🛡️ ┃ Sr. Admin" -> "Sr. Admin"; Teile ohne Buchstaben (Emojis, "*") zählen nicht, ganz ohne -> ""
 function cleanRoleName(name) {
-  const parts = String(name).split(/[┃|│]/);
-  return parts[parts.length - 1].replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}.)!]+$/gu, "").trim() || String(name).trim();
+  const parts = String(name).split(/[┃|│]/)
+    .map(part => part.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}.)!]+$/gu, "").trim())
+    .filter(part => /\p{L}/u.test(part));
+  return parts[parts.length - 1] || "";
 }
 
 // --- Abgleich mit der Mod-API (GET /api/v1/lives und /api/v1/stats) -------------
