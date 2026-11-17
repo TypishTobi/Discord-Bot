@@ -1057,7 +1057,7 @@ async function handleEventPing(interaction, env, ctx) {
 }
 
 // Nachricht samt Knöpfen aus Titel, Text, Rolle, Limit und Teilnehmern bauen
-function signupMessage({ title, text, roleId, limit, ids, description, creatorId = "", startAt = 0, ended = false }) {
+function signupMessage({ title, text, roleId, limit, ids, description, creatorId = "", startAt = 0, ended = false, started = false }) {
   const full = ids.length >= (limit || MAX_SIGNUPS);
   const desc = description ?? signupDescription({ text, roleId, limit, startAt });
   const fields = [];
@@ -1072,14 +1072,16 @@ function signupMessage({ title, text, roleId, limit, ids, description, creatorId
     embeds: [{
       title,
       description: desc,
-      color: full || ended ? 0x62789a : 0x6fd8f7,
+      color: full || ended || started ? 0x62789a : 0x6fd8f7,
       fields: (fields.length ? fields : [ended ? "Niemand" : "Noch niemand – sei der Erste!"]).map((value, i) => ({ name: i ? "​" : head, value })),
-      footer: ended ? { text: "Event beendet – die Rollen wurden entfernt." } : full ? { text: "Alle Plätze sind vergeben." } : undefined,
+      footer: ended ? { text: "Event beendet – die Rollen wurden entfernt." }
+        : started ? { text: "Das Event läuft – Eintragen ist nicht mehr möglich." }
+        : full ? { text: "Alle Plätze sind vergeben." } : undefined,
     }],
     components: [{
       type: 1,
       components: [
-        { type: 2, style: 3, custom_id: `signup:join:${roleId}:${limit}`, label: ended ? "Beendet" : full ? "Voll" : "Eintragen", emoji: { name: "✅" }, disabled: full || ended },
+        { type: 2, style: 3, custom_id: `signup:join:${roleId}:${limit}`, label: ended ? "Beendet" : started ? "Gestartet" : full ? "Voll" : "Eintragen", emoji: { name: "✅" }, disabled: full || ended || started },
         { type: 2, style: 2, custom_id: `signup:leave:${roleId}:${limit}`, label: "Austragen", disabled: ended },
         { type: 2, style: 2, custom_id: `signup:manage:${roleId}:${limit}:${creatorId}`, label: "Verwalten", emoji: { name: "⚙️" } },
       ],
@@ -1116,6 +1118,10 @@ async function handleSignupButton(interaction, env) {
 
     if (action === "join") {
       if (signupSettings(message).ended) return reply("🏁 Dieses Event ist schon beendet.");
+      const { startAt: begins } = parseSignupDescription(message.embeds?.[0]?.description);
+      if (signupSettings(message).started || (begins && begins <= Date.now())) {
+        return reply("⏱️ Das Event hat schon begonnen – Eintragen ist nicht mehr möglich.");
+      }
       if (ids.includes(userId)) return reply(`ℹ️ Du bist schon eingetragen und hast <@&${roleId}>.`);
       if ((await signupBans(env, message.id)).includes(userId)) return reply("🚫 Du wurdest von diesem Event ausgeschlossen.");
       if (ids.length >= (limit || MAX_SIGNUPS)) return reply("❌ Leider sind schon alle Plätze vergeben.");
@@ -1138,7 +1144,8 @@ async function handleSignupButton(interaction, env) {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        ...signupMessage({ title: embed.title, description: embed.description, roleId, limit, ids, creatorId: signupCreator(message) }),
+        ...signupMessage({ title: embed.title, description: embed.description, roleId, limit, ids, creatorId: signupCreator(message),
+          started: signupSettings(message).started }),
         allowed_mentions: { parse: [] },
       }),
     });
@@ -1166,7 +1173,7 @@ function signupSettings(message) {
   const join = (message.components ?? []).flatMap(row => row.components ?? [])
     .find(c => String(c.custom_id).startsWith("signup:join:"));
   const [, , roleId, limit] = join ? join.custom_id.split(":") : [];
-  return { roleId, limit: Number(limit) || 0, ended: join?.label === "Beendet" };
+  return { roleId, limit: Number(limit) || 0, ended: join?.label === "Beendet", started: join?.label === "Gestartet" };
 }
 
 async function signupBans(env, messageId) {
@@ -1216,7 +1223,7 @@ async function handleSignupModeration(interaction, env) {
   if ((action === "ban" || action === "unban") && !env.EVENTS_KV) {
     return "❌ Bannen braucht den KV-Speicher EVENTS_KV im Worker.";
   }
-  const { roleId, limit, ended } = signupSettings(message);
+  const { roleId, limit, ended, started } = signupSettings(message);
   const ids = signupIds(message);
   const bans = await signupBans(env, messageId);
   const targets = [...new Set(interaction.data.values ?? [])];
@@ -1238,7 +1245,7 @@ async function handleSignupModeration(interaction, env) {
   if (kicked.length) {
     const embed = message.embeds?.[0] ?? {};
     await discord(env, `/channels/${channelId}/messages/${messageId}`, "PATCH", {
-      ...signupMessage({ title: embed.title, description: embed.description, roleId, limit, ids, creatorId, ended }),
+      ...signupMessage({ title: embed.title, description: embed.description, roleId, limit, ids, creatorId, ended, started }),
       allowed_mentions: { parse: [] },
     });
   }
@@ -1319,6 +1326,7 @@ async function runEventReminders(env) {
     if (now - e.startAt > 30 * 60 * 1000) continue; // mehr als 30 Minuten verpasst: nicht mehr pingen
     try {
       await sendStartPing(env, e);
+      await closeSignupAtStart(env, e.channelId, e.messageId, e.startAt);
     } catch (err) {
       console.error("Event-Erinnerung fehlgeschlagen:", err);
     }
@@ -1379,6 +1387,20 @@ async function sendStartPing(env, e) {
     allowed_mentions: { roles: [e.roleId] },
   });
   return target;
+}
+
+// Zum Start: Eintragen sperren (Austragen bleibt möglich), Startzeit als "gestartet" markieren
+async function closeSignupAtStart(env, channelId, messageId, startAt) {
+  const message = await discord(env, `/channels/${channelId}/messages/${messageId}`, "GET");
+  const settings = signupSettings(message);
+  if (settings.ended || settings.started) return;
+  const embed = message.embeds?.[0] ?? {};
+  const { text } = parseSignupDescription(embed.description);
+  await discord(env, `/channels/${channelId}/messages/${messageId}`, "PATCH", {
+    ...signupMessage({ title: embed.title, description: signupDescription({ text, roleId: settings.roleId, limit: settings.limit, startAt, started: true }),
+      roleId: settings.roleId, limit: settings.limit, ids: signupIds(message), creatorId: signupCreator(message), started: true }),
+    allowed_mentions: { parse: [] },
+  });
 }
 
 // --- Event bearbeiten und direkt starten ------------------------------------
@@ -1475,10 +1497,11 @@ async function handleSignupEdit(interaction, env) {
     if (typeof startAt === "string") return startAt;
   }
 
-  const { roleId, ended } = signupSettings(message);
+  const { roleId, ended, started: wasStarted } = signupSettings(message);
+  const started = startAt ? false : wasStarted; // neue Startzeit liegt immer in der Zukunft
   const ids = signupIds(message);
   await discord(env, `/channels/${channelId}/messages/${messageId}`, "PATCH", {
-    ...signupMessage({ title, description: signupDescription({ text, roleId, limit, startAt }), roleId, limit, ids, creatorId, ended }),
+    ...signupMessage({ title, description: signupDescription({ text, roleId, limit, startAt, started }), roleId, limit, ids, creatorId, ended, started }),
     allowed_mentions: { parse: [] },
   });
 
@@ -1524,7 +1547,7 @@ async function handleSignupStartNow(interaction, env) {
   const { text } = parseSignupDescription(embed.description);
   await discord(env, `/channels/${channelId}/messages/${messageId}`, "PATCH", {
     ...signupMessage({ title: embed.title, description: signupDescription({ text, roleId, limit, startAt: Date.now(), started: true }),
-      roleId, limit, ids: signupIds(message), creatorId }),
+      roleId, limit, ids: signupIds(message), creatorId, started: true }),
     allowed_mentions: { parse: [] },
   });
   return `▶️ **${event.title}** gestartet – <@&${roleId}> wurde in <#${target}> gepingt.`;
