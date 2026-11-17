@@ -9,7 +9,7 @@
   var board=document.getElementById("tier-board"),grid=document.getElementById("player-grid"),teamsGrid=document.getElementById("teams-grid");
   var creatorGrid=document.getElementById("creator-grid"),creatorAdd=document.getElementById("creator-add");
   var authBox=document.getElementById("team-auth"),msg=document.getElementById("team-msg");
-  var livesSynced=false,players=[],teams=[],tiers=DEFAULT_TIERS,teamCount=12,maxHearts=4,session=null,me=null,selected=null,editId=null;
+  var livesSynced=false,players=[],staff=[],teams=[],tiers=DEFAULT_TIERS,teamCount=12,maxHearts=4,session=null,me=null,selected=null,editId=null;
 
   function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
   function head(p){return "https://minotar.net/helm/"+encodeURIComponent(p.minecraftUuid||"MHF_Steve")+"/64.png";}
@@ -28,7 +28,7 @@
   }
   // quiet: Hintergrund-Aktualisierung; bei einem Fehler bleibt die bisherige Anzeige stehen
   var CACHE_KEY="radius2-members",shown=false;
-  var usesMembers=!!(board||grid||teamsGrid||creatorGrid||document.getElementById("socials-grid")||document.getElementById("event-feed"));
+  var usesMembers=!!(board||grid||teamsGrid||creatorGrid||document.getElementById("roster")||document.getElementById("socials-grid")||document.getElementById("event-feed"));
   function apply(data){
     var seen={};players=[];
     (data.roles||[]).forEach(function(role){(role.members||[]).forEach(function(m){if(!seen[m.id]){seen[m.id]=1;players.push(m);}});});
@@ -36,6 +36,7 @@
     if(data.teamCount)teamCount=data.teamCount;
     if(data.maxHearts)maxHearts=data.maxHearts;
     teams=data.teams||[];
+    staff=data.staff||[];
     links=data.links||{};
     livesSynced=!!data.livesSynced;
     shown=true;renderRoster();rerender();
@@ -69,10 +70,15 @@
   function teamLost(n){var t=teams.filter(function(x){return x.team===n;})[0];return t?Math.min(t.heartsLost||0,maxHearts):0;}
 
   // ---- Team: alle mit Rang im Discord-Namen ("Admin | Mrtx"), gruppiert nach Rang ----
+  // Server-Team vom Worker (alle ab Moderator, nach höchster Rolle gruppiert); fehlt es
+  // (z. B. GitHub-Kopie), dienen die Teilnehmer mit Rang im Namen als Ersatz
   function renderRoster(){
     var box=document.getElementById("roster");if(!box)return;
-    var groups=[],byRank={};
-    players.forEach(function(p){
+    var groups=[],byRank={},byId={};
+    players.forEach(function(p){byId[p.id]=p;});
+    if(staff&&staff.length){
+      groups=staff.map(function(g){return {rank:g.role,color:g.color,list:g.members.map(function(m){return byId[m.id]||m;})};});
+    }else players.forEach(function(p){
       if(!p.rank)return;
       if(!byRank[p.rank]){byRank[p.rank]={rank:p.rank,color:p.rankColor,list:[]};groups.push(byRank[p.rank]);}
       byRank[p.rank].list.push(p);
@@ -83,8 +89,9 @@
       if(g.color)h.style.setProperty("--rank",g.color);
       var grid=el("div","roster-grid");
       g.list.forEach(function(p){
-        var card=el("button","roster-card"),txt=el("div");card.type="button";
-        card.onclick=function(){openPlayer(p);};card.setAttribute("aria-label",(p.name||p.displayName)+": Details anzeigen");
+        // Nur Teilnehmer haben ein Profil (Team, Tier, Kills); alle anderen sind eine einfache Karte
+        var player=!!byId[p.id],card=el(player?"button":"div","roster-card"+(player?"":" static")),txt=el("div");
+        if(player){card.type="button";card.onclick=function(){openPlayer(p);};card.setAttribute("aria-label",(p.name||p.displayName)+": Details anzeigen");}
         card.appendChild(headImg(p,56));
         txt.appendChild(el("h4",null,p.name||p.displayName));
         if(p.minecraft)txt.appendChild(el("p","mc","@"+p.minecraft));

@@ -548,7 +548,43 @@ async function buildMembers(env) {
     livesSynced, // true = Herzen kommen live aus der Mod, Bearbeiten auf der Website ist dann aus
     links: parseLinks(tierContents),
     roles: result,
+    staff: buildStaff(env, roles, members, names),
   };
+}
+
+// Server-Team für die Team-Seite: alle mit einer Rolle ab MIN_ROLE_ID (Moderator) oder höher,
+// gruppiert nach ihrer höchsten Team-Rolle. Nur Anzeigename (ohne "Rang |") und Minecraft-Kopf.
+function buildStaff(env, roles, members, names) {
+  const minRole = roles.find(r => r.id === (env.MIN_ROLE_ID || DEFAULT_MIN_ROLE_ID).trim());
+  if (!minRole) return [];
+  const teamRoles = new Map(roles.filter(r => !r.managed && r.position >= minRole.position).map(r => [r.id, r]));
+  const groups = new Map();
+  for (const m of members) {
+    if (m.user.bot) continue;
+    const top = m.roles.map(id => teamRoles.get(id)).filter(Boolean).sort((a, b) => b.position - a.position)[0];
+    if (!top) continue;
+    if (!groups.has(top.id)) {
+      groups.set(top.id, { role: cleanRoleName(top.name), color: top.color ? hexColor(top.color) : null, position: top.position, members: [] });
+    }
+    const displayName = m.nick || m.user.global_name || m.user.username;
+    const bar = displayName.indexOf("|");
+    const mc = names.get(m.user.id);
+    groups.get(top.id).members.push({
+      id: m.user.id,
+      name: (bar === -1 ? displayName : displayName.slice(bar + 1)).trim(),
+      minecraft: mc?.name ?? null,
+      minecraftUuid: mc?.uuid ?? null,
+    });
+  }
+  return [...groups.values()]
+    .sort((a, b) => b.position - a.position)
+    .map(({ position, ...g }) => ({ ...g, members: g.members.sort((a, b) => a.name.localeCompare(b.name, "de")) }));
+}
+
+// "🛡️ ┃ Sr. Admin" -> "Sr. Admin"
+function cleanRoleName(name) {
+  const parts = String(name).split(/[┃|│]/);
+  return parts[parts.length - 1].replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}.)!]+$/gu, "").trim() || String(name).trim();
 }
 
 // --- Abgleich mit der Mod-API (GET /api/v1/lives und /api/v1/stats) -------------
