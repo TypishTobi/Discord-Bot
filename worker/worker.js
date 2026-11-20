@@ -23,6 +23,9 @@
 //   SESSION_SECRET      Optional; Schlüssel für Website-Sitzungen (Standard: Bot-Token)
 //   ANMELDUNG_CHANNEL_ID Optional; Kanal, in dem /event erlaubt ist (Standard siehe unten)
 //   EVENT_ADMIN_ROLE_ID Optional; ab dieser Rolle ist /event überall erlaubt (Standard: Rolle "Admin")
+//   ANTICHEAT_URL       Optional; Adresse des Anticheat-Plugins, z. B. http://mc.example.de:8095
+//                       (Befehle /ac-… werden dorthin an /discord/interaction weitergeleitet)
+//   ANTICHEAT_SECRET    Optional (als Secret!); wird als Header X-Anticheat-Secret mitgeschickt
 //
 // Team-Login: /login in Discord liefert einen Einmal-Code (nur für den Nutzer sichtbar,
 // 10 Minuten gültig), der als "login:<code>:<discordId>:<ablauf>" im Tier-Kanal liegt.
@@ -120,6 +123,9 @@ export default {
 
     // PING von Discord beim Speichern der Interactions Endpoint URL
     if (interaction.type === 1) return json({ type: 1 });
+
+    // Anticheat-Befehle (/ac-…) und deren Knöpfe/Fenster gehen an den Minecraft-Server
+    if (isAnticheatInteraction(interaction)) return forwardToAnticheat(interaction, env);
 
     // Button geklickt -> Eingabefenster öffnen
     if (interaction.type === 3 && interaction.data.custom_id === "mc_register") {
@@ -1566,6 +1572,39 @@ async function handleSignupStartNow(interaction, env) {
     allowed_mentions: { parse: [] },
   });
   return `▶️ **${event.title}** gestartet – <@&${roleId}> wurde in <#${target}> gepingt.`;
+}
+
+// --- Anticheat auf dem Minecraft-Server ---------------------------------------
+// Slash-Befehle "ac-…" (und Knöpfe/Fenster mit custom_id "ac-…" oder "ac:…") werden samt
+// geprüfter Discord-Interaktion an das Anticheat-Plugin geschickt; dessen Antwort geht direkt
+// an Discord zurück. Discord wartet höchstens 3 Sekunden, daher 2,8 Sekunden Zeitlimit.
+
+function isAnticheatInteraction(interaction) {
+  if (interaction.type === 2 || interaction.type === 4) return String(interaction.data?.name ?? "").startsWith("ac-");
+  if (interaction.type === 3 || interaction.type === 5) return /^ac[-:]/.test(String(interaction.data?.custom_id ?? ""));
+  return false;
+}
+
+async function forwardToAnticheat(interaction, env) {
+  const base = String(env.ANTICHEAT_URL ?? "").trim().replace(/\/+$/, "");
+  if (!base || !env.ANTICHEAT_SECRET) {
+    return json({ type: 4, data: { flags: EPHEMERAL, content: "Das Anticheat ist im Worker noch nicht eingerichtet (ANTICHEAT_URL und ANTICHEAT_SECRET fehlen)." } });
+  }
+  try {
+    const res = await fetch(`${base}/discord/interaction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Anticheat-Secret": env.ANTICHEAT_SECRET },
+      body: JSON.stringify(interaction),
+      signal: AbortSignal.timeout(2800),
+    });
+    if (!res.ok) throw new Error(`Anticheat antwortet mit ${res.status}`);
+    const reply = await res.json();
+    if (typeof reply?.type !== "number") throw new Error("Anticheat-Antwort ohne type");
+    return json(reply);
+  } catch (err) {
+    console.error("Anticheat nicht erreichbar:", err);
+    return json({ type: 4, data: { flags: EPHEMERAL, content: "Minecraft-Server nicht erreichbar." } });
+  }
 }
 
 // --- Discord-Login und Tierlist -------------------------------------------
